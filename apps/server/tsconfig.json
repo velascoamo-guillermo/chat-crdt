@@ -1,16 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "module": "CommonJS",
-    "moduleResolution": "node",
+    "module": "Node16",
+    "moduleResolution": "node16",
     "outDir": "dist",
     "rootDir": "src",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "target": "ES2021",
-    "paths": {
-      "@chat-crdt/shared": ["../../packages/shared/src/index.ts"]
-    }
+    "target": "ES2022"
   },
   "include": ["src"],
   "exclude": ["dist", "node_modules"]

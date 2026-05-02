@@ -1,5 +1,13 @@
 node_modules/
 dist/
+build/
 .env
+.env.*
+!.env.example
 *.local
 .turbo/
+.expo/
+ios/
+android/
+coverage/
+**/.DS_Store

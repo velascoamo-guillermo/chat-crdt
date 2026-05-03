@@ -1,3 +1,4 @@
+// Prisma v5 — pinned at ^5; v6+ requires prisma.config.ts and has breaking CLI changes
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,7 +12,7 @@ model User {
   id        String    @id @default(uuid())
   email     String    @unique
   username  String    @unique
-  password  String
+  password  String    @db.VarChar(255)
   createdAt DateTime  @default(now())
   messages  Message[]
 }
@@ -20,6 +21,7 @@ model Room {
   id        String    @id @default(uuid())
   name      String    @unique
   createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   messages  Message[]
   yjsState  Bytes?
 }
@@ -30,6 +32,9 @@ model Message {
   createdAt DateTime @default(now())
   userId    String
   roomId    String
-  user      User     @relation(fields: [userId], references: [id])
-  room      Room     @relation(fields: [roomId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, createdAt])
+  @@index([userId])
 }

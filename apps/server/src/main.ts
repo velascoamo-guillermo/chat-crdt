@@ -11,7 +11,7 @@ async function bootstrap() {
   app.enableCors({
     origin: process.env.CORS_ORIGIN ?? 'http://localhost:8081',
   });
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   const port = process.env.PORT ?? 3001;
   await app.listen(port);
   logger.log(`Server running on port ${port}`);

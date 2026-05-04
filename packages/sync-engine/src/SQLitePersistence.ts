@@ -19,9 +19,29 @@ export class MemoryStorage implements IStorage {
   }
 }
 
+function uint8ToBase64(bytes: Uint8Array): string {
+  // Loop instead of spread to avoid call-stack overflow on large documents
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
 export class SQLitePersistence {
+  // Storage key uses roomId (stable across restarts) not doc.guid (random per instance)
   private readonly key: string;
   private loaded = false;
+  private destroyed = false;
   private readonly docUpdateHandler: () => void;
 
   constructor(
@@ -31,25 +51,20 @@ export class SQLitePersistence {
     this.key = `yjs:${engine.roomId}`;
     this.docUpdateHandler = () => {
       const state = engine.encodeState();
-      // base64 encode for text storage
-      const b64 = btoa(String.fromCharCode(...state));
-      storage.setItem(this.key, b64).catch(() => {
+      storage.setItem(this.key, uint8ToBase64(state)).catch(() => {
         // persist errors are non-fatal — next write will retry
       });
     };
   }
 
   async load(): Promise<void> {
+    if (this.loaded) return; // idempotent
     const raw = await this.storage.getItem(this.key);
+    if (this.destroyed) return; // component unmounted during async read
     if (raw) {
-      const binary = atob(raw);
-      const update = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        update[i] = binary.charCodeAt(i);
-      }
-      Y.applyUpdate(this.engine.doc, update);
+      Y.applyUpdate(this.engine.doc, base64ToUint8(raw));
     }
-    // Subscribe to future updates AFTER loading to avoid persisting the initial load
+    // Subscribe AFTER loading to avoid persisting the initial hydration
     this.engine.doc.on('update', this.docUpdateHandler);
     this.loaded = true;
   }
@@ -59,6 +74,7 @@ export class SQLitePersistence {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.engine.doc.off('update', this.docUpdateHandler);
   }
 }

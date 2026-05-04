@@ -76,7 +76,18 @@ export class WebSocketProvider {
     };
 
     this.ws.onmessage = (event: MessageEvent) => {
-      this.handleServerMessage(new Uint8Array(event.data as ArrayBuffer));
+      let data: Uint8Array;
+      if (typeof event.data === 'string') {
+        // React Native may deliver binary as base64 string
+        const binary = atob(event.data);
+        data = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          data[i] = binary.charCodeAt(i);
+        }
+      } else {
+        data = new Uint8Array(event.data as ArrayBuffer);
+      }
+      this.handleServerMessage(data);
     };
 
     this.ws.onclose = () => {

@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "chat-crdt",
+    "slug": "chat-crdt",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "chatcrdt",
+    "platforms": ["ios", "android"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.chatcrdt.app"
+    },
+    "android": {
+      "package": "com.chatcrdt.app"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "@op-engineering/op-sqlite",
+        {
+          "sqliteFlags": "-DSQLITE_DQS=0"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

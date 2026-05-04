@@ -9,6 +9,10 @@ export class SyncEngine {
   private readonly config: SyncEngineConfig;
   private readonly subscriptions = new Set<(event: Y.YArrayEvent<MessageDto>) => void>();
 
+  get roomId(): string {
+    return this.config.roomId;
+  }
+
   constructor(config: SyncEngineConfig) {
     this.config = config;
     this.doc = new Y.Doc();

@@ -1,4 +1,5 @@
 import * as Y from 'yjs';
+import { ulid } from 'ulid';
 import { MessageDto } from '@chat-crdt/shared';
 import { SyncEngineConfig } from './types';
 
@@ -6,6 +7,7 @@ export class SyncEngine {
   readonly doc: Y.Doc;
   private readonly messages: Y.Array<MessageDto>;
   private readonly config: SyncEngineConfig;
+  private readonly subscriptions = new Set<(event: Y.YArrayEvent<MessageDto>) => void>();
 
   constructor(config: SyncEngineConfig) {
     this.config = config;
@@ -15,16 +17,14 @@ export class SyncEngine {
 
   sendMessage(content: string): MessageDto {
     const msg: MessageDto = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      id: ulid(),
       roomId: this.config.roomId,
       userId: this.config.userId,
       username: this.config.username,
       content,
       createdAt: Date.now(),
     };
-    this.doc.transact(() => {
-      this.messages.push([msg]);
-    });
+    this.messages.push([msg]);
     return msg;
   }
 
@@ -34,8 +34,12 @@ export class SyncEngine {
 
   subscribe(callback: (messages: MessageDto[]) => void): () => void {
     const handler = () => callback(this.getMessages());
+    this.subscriptions.add(handler);
     this.messages.observe(handler);
-    return () => this.messages.unobserve(handler);
+    return () => {
+      this.messages.unobserve(handler);
+      this.subscriptions.delete(handler);
+    };
   }
 
   encodeState(): Uint8Array {
@@ -55,6 +59,10 @@ export class SyncEngine {
   }
 
   destroy(): void {
+    for (const handler of this.subscriptions) {
+      this.messages.unobserve(handler);
+    }
+    this.subscriptions.clear();
     this.doc.destroy();
   }
 }

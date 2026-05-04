@@ -58,6 +58,16 @@ describe('SyncEngine', () => {
 
       expect(engine.getMessages()).toHaveLength(1);
     });
+
+    it('applying same remote update twice is idempotent (network retry scenario)', () => {
+      const a = new SyncEngine({ roomId: 'r', userId: 'u1', username: 'alice' });
+      const b = new SyncEngine({ roomId: 'r', userId: 'u2', username: 'bob' });
+      a.sendMessage('hello');
+      const update = a.encodeState();
+      b.applyUpdate(update); // first delivery
+      b.applyUpdate(update); // duplicate delivery — network retry
+      expect(b.getMessages()).toHaveLength(1);
+    });
   });
 
   describe('subscribe', () => {

@@ -1,6 +1,7 @@
 {
   "name": "@chat-crdt/sync-engine",
   "version": "0.0.1",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": ["dist", "src"],
@@ -16,12 +17,19 @@
     "test": "bun test"
   },
   "dependencies": {
-    "yjs": "^13.6.27",
+    "ulid": "^2.3.0",
     "y-protocols": "^1.0.6",
     "lib0": "^0.2.109",
     "@chat-crdt/shared": "workspace:*"
   },
+  "peerDependencies": {
+    "yjs": "^13.6.0"
+  },
   "devDependencies": {
+    "yjs": "^13.6.27",
     "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

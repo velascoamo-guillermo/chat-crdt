@@ -1,0 +1,106 @@
+# chat-crdt
+
+Offline-first real-time chat with CRDT sync. Single-room MVP.
+
+> **Staff Mobile portfolio project.** Demonstrates offline-first architecture, CRDT merge semantics, cross-platform sync, and extractable npm library design.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│  Expo Router (React Native)                 │
+│  FlashList · Zustand · expo-secure-store    │
+│                                             │
+│  ┌──────────────────────────────────┐       │
+│  │  @chat-crdt/sync-engine          │       │
+│  │  SyncEngine (Yjs Y.Array)        │       │
+│  │  WebSocketProvider (offline Q)   │       │
+│  │  SQLitePersistence (op-sqlite)   │       │
+│  └──────────┬───────────────────────┘       │
+└─────────────┼───────────────────────────────┘
+              │ WebSocket (y-protocols binary)
+              ▼
+┌─────────────────────────────────────────────┐
+│  NestJS Server                              │
+│  SyncGateway (Yjs Y.Doc per room)           │
+│  AuthModule (JWT)                           │
+│  PrismaModule (PostgreSQL)                  │
+│                │                            │
+│         Redis pub/sub                       │
+│         (multi-instance fan-out)            │
+└─────────────────────────────────────────────┘
+```
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Mobile | Expo Router, React Native 0.76, FlashList |
+| CRDT sync | Yjs, y-protocols, `@chat-crdt/sync-engine` |
+| Mobile storage | op-sqlite (SQLite) |
+| State | Zustand |
+| Backend | NestJS v11, WebSocket (ws) |
+| Auth | JWT (passport-jwt) |
+| Database | PostgreSQL 16 + Prisma 5 |
+| Realtime fan-out | Redis 7 pub/sub |
+
+## Quick start
+
+```bash
+# 1. Start infrastructure
+docker compose -f infra/docker-compose.yml up -d
+
+# 2. Install all dependencies
+bun install
+
+# 3. Run DB migrations
+cd apps/server && bunx prisma migrate deploy
+
+# 4. Start the server
+cd apps/server && bun run dev
+
+# 5. Start the mobile app
+cd apps/mobile && bun run dev
+```
+
+## Project structure
+
+```
+chat-crdt/
+  apps/
+    mobile/          # Expo Router app
+    server/          # NestJS backend
+  packages/
+    sync-engine/     # Yjs wrapper — extractable npm package
+    shared/          # Shared TypeScript types
+  infra/
+    docker-compose.yml
+  docs/
+    adr/             # Architecture Decision Records
+```
+
+## Key design decisions
+
+See [docs/adr/](docs/adr/) for documented architecture decisions.
+
+## Offline-first flow
+
+1. User sends message → inserted into local `Y.Array` immediately (optimistic)
+2. `SQLitePersistence` persists Yjs state to SQLite on every update
+3. `WebSocketProvider` sends update to server via y-protocols binary protocol
+4. If offline: update queued in memory, flushed with exponential backoff on reconnect
+5. On reconnect: client sends state vector, server responds with diff, CRDT merge is automatic
+
+## Running tests
+
+```bash
+# sync-engine unit tests
+cd packages/sync-engine && bun test
+
+# server unit tests
+cd apps/server && npx jest
+```
+
+## ADRs
+
+- [ADR 001: Yjs over Automerge](docs/adr/001-yjs-over-automerge.md)

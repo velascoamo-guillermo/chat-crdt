@@ -14,12 +14,15 @@ import { useChatStore } from '../../src/store/chat.store';
 import { useSync } from '../../src/hooks/useSync';
 import { MessageItem } from '../../src/components/MessageItem';
 import { useAuthStore } from '../../src/store/auth.store';
+import { usePresence } from '../../src/hooks/usePresence';
+import { TypingIndicator } from '../../src/components/TypingIndicator';
 
 export default function ChatScreen() {
   const [input, setInput] = useState('');
   const messages = useChatStore(s => s.messages);
   const wsStatus = useChatStore(s => s.wsStatus);
-  const { sendMessage, sendTyping } = useSync();
+  const { sendMessage, sendTyping, getAwareness } = useSync();
+  const { typingUsers, onlineCount } = usePresence(getAwareness());
   const logout = useAuthStore(s => s.logout);
   const listRef = useRef<FlashList<MessageDto>>(null);
 
@@ -53,6 +56,7 @@ export default function ChatScreen() {
         <Text style={styles.roomName}># general</Text>
         <View style={styles.headerRight}>
           <View style={[styles.dot, { backgroundColor: statusColor }]} />
+          <Text style={styles.onlineText}>{onlineCount} online</Text>
           <TouchableOpacity onPress={logout}>
             <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
@@ -70,6 +74,8 @@ export default function ChatScreen() {
         }
         contentContainerStyle={styles.listContent}
       />
+
+      <TypingIndicator typingUsers={typingUsers} />
 
       <View style={styles.inputRow}>
         <TextInput
@@ -110,6 +116,7 @@ const styles = StyleSheet.create({
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   logoutText: { color: '#888', fontSize: 14 },
+  onlineText: { fontSize: 12, color: '#888' },
   listContent: { paddingVertical: 8 },
   inputRow: {
     flexDirection: 'row',

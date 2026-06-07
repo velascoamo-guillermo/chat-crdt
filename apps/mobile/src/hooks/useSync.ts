@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { open } from '@op-engineering/op-sqlite';
+import * as SQLite from 'expo-sqlite';
 import {
   SyncEngine,
   WebSocketProvider,
@@ -23,7 +23,7 @@ export function useSync() {
   useEffect(() => {
     if (!token || !user) return;
 
-    const db = open({ name: 'chat.db' });
+    const db = SQLite.openDatabaseSync('chat.db');
 
     const engine = new SyncEngine({
       roomId: ROOM_ID,
@@ -32,8 +32,8 @@ export function useSync() {
     });
     engineRef.current = engine;
 
-    // Use IStorage-compatible wrapper around op-sqlite
-    const storage = createOpSQLiteStorage(db);
+    // Use IStorage-compatible wrapper around expo-sqlite
+    const storage = createExpoSQLiteStorage(db);
     const persistence = new SQLitePersistence(engine, storage);
 
     let provider: WebSocketProvider | null = null;
@@ -58,6 +58,7 @@ export function useSync() {
       persistence.destroy();
       provider?.destroy();
       engine.destroy();
+      db.closeSync();
       providerRef.current = null;
       engineRef.current = null;
     };
@@ -76,26 +77,27 @@ export function useSync() {
   return { sendMessage, sendTyping, getAwareness };
 }
 
-// Thin IStorage adapter for op-sqlite
-function createOpSQLiteStorage(db: ReturnType<typeof open>) {
-  const initPromise = db.execute(
+// Thin IStorage adapter for expo-sqlite
+function createExpoSQLiteStorage(db: SQLite.SQLiteDatabase) {
+  const initPromise = db.execAsync(
     'CREATE TABLE IF NOT EXISTS yjs_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)'
   );
 
   return {
     async getItem(key: string): Promise<string | null> {
       await initPromise;
-      const result = await db.execute(
+      const row = await db.getFirstAsync<{ value: string }>(
         'SELECT value FROM yjs_kv WHERE key = ?',
-        [key]
+        key
       );
-      return (result.rows?.[0]?.['value'] as string | undefined) ?? null;
+      return row?.value ?? null;
     },
     async setItem(key: string, value: string): Promise<void> {
       await initPromise;
-      await db.execute(
+      await db.runAsync(
         'INSERT INTO yjs_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-        [key, value]
+        key,
+        value
       );
     },
   };

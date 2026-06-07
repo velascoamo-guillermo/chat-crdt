@@ -15,16 +15,16 @@ graph LR
         UC1["Register account"]
         UC2["Login"]
         UC3["Logout"]
-        UC4["Persist session\n(SecureStore)"]
+        UC4["Persist session<br/>(SecureStore)"]
     end
 
     subgraph "Chat"
         UC5["Send message"]
-        UC6["Receive message\n(real-time)"]
-        UC7["View history\n(on load)"]
-        UC8["Send while offline\n(queue)"]
-        UC9["Auto-sync\non reconnect"]
-        UC10["CRDT merge\n(no conflict visible)"]
+        UC6["Receive message<br/>(real-time)"]
+        UC7["View history<br/>(on load)"]
+        UC8["Send while offline<br/>(queue)"]
+        UC9["Auto-sync<br/>on reconnect"]
+        UC10["CRDT merge<br/>(no conflict visible)"]
     end
 
     subgraph "Presence"
@@ -61,38 +61,38 @@ graph LR
 graph TB
     subgraph "📱 Expo App (React Native)"
         direction TB
-        UI["UI Layer\nFlashList · TextInput · Header"]
-        AUTH_SCREEN["Auth Screens\nlogin.tsx · register.tsx"]
-        CHAT_SCREEN["Chat Screen\n(chat)/index.tsx"]
-        PRESENCE_UI["Presence UI\nTypingIndicator · OnlineCount"]
+        UI["UI Layer<br/>FlashList · TextInput · Header"]
+        AUTH_SCREEN["Auth Screens<br/>login.tsx · register.tsx"]
+        CHAT_SCREEN["Chat Screen<br/>(chat)/index.tsx"]
+        PRESENCE_UI["Presence UI<br/>TypingIndicator · OnlineCount"]
 
         subgraph "State (Zustand)"
-            AUTH_STORE["useAuthStore\ntoken · user · isLoading"]
-            CHAT_STORE["useChatStore\nmessages · wsStatus"]
+            AUTH_STORE["useAuthStore<br/>token · user · isLoading"]
+            CHAT_STORE["useChatStore<br/>messages · wsStatus"]
         end
 
         subgraph "Hooks"
-            USE_SYNC["useSync()\ninitiates SyncEngine + Provider"]
-            USE_PRESENCE["usePresence(awareness)\ntypingUsers · onlineCount"]
+            USE_SYNC["useSync()<br/>initiates SyncEngine + Provider"]
+            USE_PRESENCE["usePresence(awareness)<br/>typingUsers · onlineCount"]
         end
 
         subgraph "@chat-crdt/sync-engine"
-            SYNC_ENGINE["SyncEngine\nY.Doc + Y.Array&lt;MessageDto&gt;"]
-            WS_PROVIDER["WebSocketProvider\noffline queue · backoff · awareness"]
-            SQLITE_PERSIST["SQLitePersistence\nload/save Yjs state"]
+            SYNC_ENGINE["SyncEngine<br/>Y.Doc + Y.Array&lt;MessageDto&gt;"]
+            WS_PROVIDER["WebSocketProvider<br/>offline queue · backoff · awareness"]
+            SQLITE_PERSIST["SQLitePersistence<br/>load/save Yjs state"]
         end
 
-        DB_SQLITE[("SQLite\n(op-sqlite)\nyjs_kv table")]
+        DB_SQLITE[("SQLite<br/>(op-sqlite)<br/>yjs_kv table")]
     end
 
     subgraph "🖥️ NestJS Server"
-        AUTH_MODULE["AuthModule\nJWT register/login"]
-        SYNC_GW["SyncGateway\nY.Doc per room\nRedis fan-out"]
-        PRISMA["PrismaService\nPostgreSQL"]
+        AUTH_MODULE["AuthModule<br/>JWT register/login"]
+        SYNC_GW["SyncGateway<br/>Y.Doc per room<br/>Redis fan-out"]
+        PRISMA["PrismaService<br/>PostgreSQL"]
     end
 
-    REDIS[("Redis 7\npub/sub")]
-    POSTGRES[("PostgreSQL 16\nUser · Room · Message")]
+    REDIS[("Redis 7<br/>pub/sub")]
+    POSTGRES[("PostgreSQL 16<br/>User · Room · Message")]
 
     AUTH_SCREEN --> AUTH_STORE
     CHAT_SCREEN --> CHAT_STORE
@@ -104,10 +104,10 @@ graph TB
     USE_SYNC --> SQLITE_PERSIST
     SQLITE_PERSIST <--> DB_SQLITE
     SYNC_ENGINE --> CHAT_STORE
-    WS_PROVIDER <-->|"WebSocket\ny-protocols binary"| SYNC_GW
+    WS_PROVIDER <-->|"WebSocket<br/>y-protocols binary"| SYNC_GW
     WS_PROVIDER --> USE_PRESENCE
 
-    AUTH_SCREEN -->|"POST /auth/login\nPOST /auth/register"| AUTH_MODULE
+    AUTH_SCREEN -->|"POST /auth/login<br/>POST /auth/register"| AUTH_MODULE
     AUTH_MODULE --> PRISMA
     SYNC_GW --> PRISMA
     SYNC_GW <--> REDIS
@@ -123,40 +123,40 @@ graph TB
     subgraph "📱 Mobile"
         RN["React Native 0.76"]
         EXPO["Expo SDK 53"]
-        EXPROUTER["Expo Router 4\n(file-based navigation)"]
-        FLASHLIST["FlashList\n(@shopify/flash-list)\nperformant list"]
-        ZUSTAND["Zustand 5\n(client state)"]
-        SECURESTORE["expo-secure-store\n(JWT storage)"]
-        OPSQLITE["op-sqlite\n(@op-engineering/op-sqlite)\n(SQLite native)"]
+        EXPROUTER["Expo Router 4<br/>(file-based navigation)"]
+        FLASHLIST["FlashList<br/>(@shopify/flash-list)<br/>performant list"]
+        ZUSTAND["Zustand 5<br/>(client state)"]
+        SECURESTORE["expo-secure-store<br/>(JWT storage)"]
+        OPSQLITE["op-sqlite<br/>(@op-engineering/op-sqlite)<br/>(SQLite native)"]
     end
 
     subgraph "🔄 Sync Engine (@chat-crdt/sync-engine)"
-        YJS["Yjs\n(CRDT Y.Array)"]
-        YPROTO["y-protocols\n(sync + awareness protocol)"]
-        LIB0["lib0\n(binary encoding)"]
-        ULID["ulid\n(monotonic message IDs)"]
+        YJS["Yjs<br/>(CRDT Y.Array)"]
+        YPROTO["y-protocols<br/>(sync + awareness protocol)"]
+        LIB0["lib0<br/>(binary encoding)"]
+        ULID["ulid<br/>(monotonic message IDs)"]
     end
 
     subgraph "🖥️ Server"
-        NESTJS["NestJS 11\n(framework)"]
-        WS["ws\n(WebSocket adapter)"]
-        JWT["@nestjs/jwt\npassport-jwt\n(auth)"]
-        IOREDIS["ioredis 5\n(Redis client)"]
-        PRISMA_LIB["Prisma 5\n(ORM)"]
-        BCRYPT["bcrypt\n(password hashing)"]
-        CLASSVAL["class-validator\nclass-transformer\n(DTO validation)"]
+        NESTJS["NestJS 11<br/>(framework)"]
+        WS["ws<br/>(WebSocket adapter)"]
+        JWT["@nestjs/jwt<br/>passport-jwt<br/>(auth)"]
+        IOREDIS["ioredis 5<br/>(Redis client)"]
+        PRISMA_LIB["Prisma 5<br/>(ORM)"]
+        BCRYPT["bcrypt<br/>(password hashing)"]
+        CLASSVAL["class-validator<br/>class-transformer<br/>(DTO validation)"]
     end
 
     subgraph "🗄️ Infrastructure"
-        PG["PostgreSQL 16\n(messages + rooms + users)"]
-        REDIS2["Redis 7\n(pub/sub fan-out)"]
-        DOCKER["Docker Compose\n(local dev)"]
-        TURBO["Turborepo 2\n(monorepo build)"]
-        BUN["Bun 1.2\n(package manager + runtime)"]
+        PG["PostgreSQL 16<br/>(messages + rooms + users)"]
+        REDIS2["Redis 7<br/>(pub/sub fan-out)"]
+        DOCKER["Docker Compose<br/>(local dev)"]
+        TURBO["Turborepo 2<br/>(monorepo build)"]
+        BUN["Bun 1.2<br/>(package manager + runtime)"]
     end
 
     subgraph "📦 Shared"
-        SHARED["@chat-crdt/shared\nTypeScript types\n(MessageDto · UserDto · PresenceState)"]
+        SHARED["@chat-crdt/shared<br/>TypeScript types<br/>(MessageDto · UserDto · PresenceState)"]
     end
 ```
 
@@ -209,7 +209,7 @@ sequenceDiagram
     App->>WS: sync step 1 (state vector)
     WS-->>App: sync step 2 (server diff)
     App->>Yjs: Y.applyUpdate(serverDiff)
-    Note over Yjs: CRDT auto-merge\nno visible conflict
+    Note over Yjs: CRDT auto-merge<br/>no visible conflict
     App->>WS: flush offline queue
     Yjs-->>App: re-render merged state
 ```
@@ -265,13 +265,13 @@ sequenceDiagram
 ```mermaid
 graph LR
     subgraph "apps/"
-        MOBILE["@chat-crdt/mobile\n(Expo)"]
-        SERVER["@chat-crdt/server\n(NestJS)"]
+        MOBILE["@chat-crdt/mobile<br/>(Expo)"]
+        SERVER["@chat-crdt/server<br/>(NestJS)"]
     end
 
     subgraph "packages/"
-        SYNC["@chat-crdt/sync-engine\n(Yjs wrapper)"]
-        SHARED["@chat-crdt/shared\n(TypeScript types)"]
+        SYNC["@chat-crdt/sync-engine<br/>(Yjs wrapper)"]
+        SHARED["@chat-crdt/shared<br/>(TypeScript types)"]
     end
 
     MOBILE --> SYNC

@@ -35,16 +35,18 @@ export default function ChatScreen() {
     >
       <ChatHeader wsStatus={wsStatus} onlineCount={onlineCount} onLogout={logout} />
 
-      <FlashList
-        ref={listRef}
-        data={messages}
-        renderItem={({ item }) => <MessageItem message={item} />}
-        keyExtractor={(item) => item.id}
-        onContentSizeChange={() =>
-          listRef.current?.scrollToEnd({ animated: false })
-        }
-        contentContainerStyle={styles.listContent}
-      />
+      <View style={styles.list}>
+        <FlashList
+          ref={listRef}
+          data={messages}
+          renderItem={({ item }) => <MessageItem message={item} />}
+          keyExtractor={(item) => item.id}
+          onContentSizeChange={() =>
+            listRef.current?.scrollToEnd({ animated: false })
+          }
+          contentContainerStyle={styles.listContent}
+        />
+      </View>
 
       <TypingIndicator typingUsers={typingUsers} />
       <Composer onSend={handleSend} sendTyping={sendTyping} />
@@ -54,5 +56,6 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg },
+  list: { flex: 1 },
   listContent: { paddingVertical: 8 },
 });

@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { MessageDto } from '@chat-crdt/shared';
 import { useAuthStore } from '../store/auth.store';
+import { theme } from '../ui';
 
 interface Props {
   message: MessageDto;
@@ -32,16 +33,16 @@ export const MessageItem = memo(function MessageItem({ message }: Props) {
 const styles = StyleSheet.create({
   row: { marginVertical: 4, marginHorizontal: 12, alignItems: 'flex-start' },
   rowOwn: { alignItems: 'flex-end' },
-  username: { fontSize: 11, color: '#888', marginBottom: 2, marginLeft: 4 },
+  username: { fontSize: 11, color: theme.textSecondary, marginBottom: 2, marginLeft: 4 },
   bubble: {
     maxWidth: '75%',
-    borderRadius: 16,
+    borderRadius: theme.radius.lg,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
-  bubbleOwn: { backgroundColor: '#0066ff', borderBottomRightRadius: 4 },
-  bubbleOther: { backgroundColor: '#f0f0f0', borderBottomLeftRadius: 4 },
-  content: { fontSize: 15, color: '#111' },
+  bubbleOwn: { backgroundColor: theme.accent, borderBottomRightRadius: theme.radius.sm },
+  bubbleOther: { backgroundColor: theme.bubbleOther, borderBottomLeftRadius: theme.radius.sm },
+  content: { fontSize: 15, color: theme.textPrimary },
   contentOwn: { color: '#fff' },
-  time: { fontSize: 10, color: '#aaa', marginTop: 2, marginHorizontal: 4 },
+  time: { fontSize: 10, color: theme.placeholder, marginTop: 2, marginHorizontal: 4 },
 });

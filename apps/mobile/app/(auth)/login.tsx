@@ -1,104 +1,79 @@
-import { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
+import { useCallback, useState } from 'react';
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/store/auth.store';
+import { Host, Column, Text, TextInput, Button, useNativeState, theme } from '../../src/ui';
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const email = useNativeState('');
+  const password = useNativeState('');
   const [loading, setLoading] = useState(false);
   const login = useAuthStore(s => s.login);
   const router = useRouter();
 
-  const handleLogin = async () => {
-    if (!email.trim() || !password.trim()) {
+  const handleLogin = useCallback(async () => {
+    if (loading) return;
+    const e = email.value.trim();
+    const p = password.value;
+    if (!e || !p) {
       Alert.alert('Error', 'Email and password are required');
       return;
     }
     setLoading(true);
     try {
-      await login(email.trim(), password);
-    } catch (e: unknown) {
-      Alert.alert('Login failed', e instanceof Error ? e.message : 'Unknown error');
+      await login(e, p);
+    } catch (err: unknown) {
+      Alert.alert('Login failed', err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setLoading(false);
     }
-  };
+  }, [email, password, login, loading]);
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.inner}>
-        <Text style={styles.title}>Chat CRDT</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="Email"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          autoComplete="email"
-          textContentType="emailAddress"
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          textContentType="password"
-        />
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleLogin}
-          disabled={loading}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Login</Text>
-          )}
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
-          <Text style={styles.link}>No account? Register</Text>
-        </TouchableOpacity>
-      </View>
+      <Host matchContents={{ vertical: true }} style={styles.host}>
+        <Column spacing={12} style={{ padding: 24 }}>
+          <Text textStyle={{ fontSize: 28, fontWeight: '700', color: theme.textPrimary, textAlign: 'center' }}>
+            Chat CRDT
+          </Text>
+          <TextInput
+            value={email}
+            placeholder="Email"
+            placeholderTextColor={theme.placeholder}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            autoComplete="email"
+            textStyle={{ fontSize: 16, color: theme.textPrimary }}
+          />
+          <TextInput
+            value={password}
+            placeholder="Password"
+            placeholderTextColor={theme.placeholder}
+            secureTextEntry
+            autoComplete="password"
+            textStyle={{ fontSize: 16, color: theme.textPrimary }}
+          />
+          <Button
+            variant="filled"
+            label={loading ? 'Logging in…' : 'Login'}
+            onPress={handleLogin}
+            style={{ backgroundColor: theme.accent, borderRadius: theme.radius.md }}
+          />
+          <Button
+            variant="text"
+            label="No account? Register"
+            onPress={() => router.push('/(auth)/register')}
+          />
+        </Column>
+      </Host>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  inner: { flex: 1, justifyContent: 'center', padding: 24 },
-  title: { fontSize: 28, fontWeight: '700', marginBottom: 32, textAlign: 'center' },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-    fontSize: 16,
-  },
-  button: {
-    backgroundColor: '#0066ff',
-    borderRadius: 8,
-    padding: 14,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  link: { textAlign: 'center', color: '#0066ff', marginTop: 8, fontSize: 15 },
+  container: { flex: 1, backgroundColor: theme.bg, justifyContent: 'center' },
+  host: { backgroundColor: theme.bg },
 });

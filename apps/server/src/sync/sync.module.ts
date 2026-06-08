@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SyncGateway } from './sync.gateway';
 import { AuthModule } from '../auth/auth.module';
+import { RoomsModule } from '../rooms/rooms.module';
 
 function redisProvider(token: string) {
   return {
@@ -15,7 +16,7 @@ function redisProvider(token: string) {
 }
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, RoomsModule],
   providers: [
     SyncGateway,
     redisProvider('REDIS_PUB'),

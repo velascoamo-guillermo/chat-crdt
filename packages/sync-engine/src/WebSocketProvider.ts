@@ -14,9 +14,22 @@ export type ProviderStatus = 'disconnected' | 'connecting' | 'connected';
 export interface WebSocketProviderConfig {
   url: string;
   token: string;
+  /** Username announced via awareness so other clients count + label this user. */
+  username?: string;
   onStatusChange?: (status: ProviderStatus) => void;
+  /**
+   * Called when the server closes the socket with an auth-failure code (4001
+   * or any 4000–4099). The token is bad/expired — retrying won't help, so the
+   * app should log out or refresh the token instead.
+   */
+  onAuthError?: (code: number) => void;
   /** Test-only hook: intercepts outgoing binary messages instead of opening a real WebSocket */
   _testSend?: (data: Uint8Array) => void;
+}
+
+/** Close codes in this range mean "don't bother reconnecting with the same token". */
+function isAuthCloseCode(code: number): boolean {
+  return code >= 4000 && code <= 4099;
 }
 
 export class WebSocketProvider {
@@ -34,6 +47,8 @@ export class WebSocketProvider {
     private readonly config: WebSocketProviderConfig,
   ) {
     this.awareness = new awarenessProtocol.Awareness(engine.doc);
+    // Announce presence immediately so we're counted even before we type.
+    this.awareness.setLocalState({ username: config.username, isTyping: false });
 
     this.docUpdateHandler = (update: Uint8Array, origin: unknown) => {
       if (this.destroyed) return;
@@ -64,8 +79,10 @@ export class WebSocketProvider {
     if (this.destroyed) return;
     this.setStatus('connecting');
 
-    const url = `${this.config.url}?token=${this.config.token}`;
-    this.ws = new WebSocket(url);
+    // Token travels in the WebSocket subprotocol, never the query string, so it
+    // stays out of access logs, proxies and browser history. Server reads it
+    // from the Sec-WebSocket-Protocol header.
+    this.ws = new WebSocket(this.config.url, ['bearer', this.config.token]);
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.onopen = () => {
@@ -73,6 +90,7 @@ export class WebSocketProvider {
       this.setStatus('connected');
       this.sendSyncStep1();
       this.flush();
+      this.broadcastLocalAwareness();
     };
 
     this.ws.onmessage = (event: MessageEvent) => {
@@ -90,11 +108,16 @@ export class WebSocketProvider {
       this.handleServerMessage(data);
     };
 
-    this.ws.onclose = () => {
-      if (!this.destroyed) {
-        this.setStatus('disconnected');
-        this.scheduleRetry();
+    this.ws.onclose = (event) => {
+      if (this.destroyed) return;
+      this.setStatus('disconnected');
+      const code = (event as { code?: number }).code ?? 0;
+      if (isAuthCloseCode(code)) {
+        // Bad/expired token — stop the backoff loop and let the app react.
+        this.config.onAuthError?.(code);
+        return;
       }
+      this.scheduleRetry();
     };
 
     this.ws.onerror = () => {
@@ -170,6 +193,12 @@ export class WebSocketProvider {
     for (const [key, value] of Object.entries(state)) {
       this.awareness.setLocalStateField(key, value);
     }
+    this.broadcastLocalAwareness();
+  }
+
+  /** Encode + send this client's current awareness state to the server. */
+  private broadcastLocalAwareness(): void {
+    if (this.destroyed) return;
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, MSG_AWARENESS);
     const update = awarenessProtocol.encodeAwarenessUpdate(this.awareness, [

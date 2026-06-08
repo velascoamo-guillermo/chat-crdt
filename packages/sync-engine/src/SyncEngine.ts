@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { ulid } from 'ulid';
-import { MessageDto } from '@chat-crdt/shared';
+import { MessageDto, MAX_MESSAGE_LENGTH } from '@chat-crdt/shared';
 import { SyncEngineConfig } from './types';
 
 export class SyncEngine {
@@ -20,12 +20,17 @@ export class SyncEngine {
   }
 
   sendMessage(content: string): MessageDto {
+    const trimmed = content.trim();
+    if (!trimmed) throw new Error('Cannot send an empty message');
+    if (trimmed.length > MAX_MESSAGE_LENGTH) {
+      throw new Error(`Message exceeds ${MAX_MESSAGE_LENGTH} characters`);
+    }
     const msg: MessageDto = {
       id: ulid(),
       roomId: this.config.roomId,
       userId: this.config.userId,
       username: this.config.username,
-      content,
+      content: trimmed,
       createdAt: Date.now(),
     };
     this.messages.push([msg]);

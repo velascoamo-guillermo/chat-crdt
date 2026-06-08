@@ -14,6 +14,7 @@ const ROOM_ID = 'default';
 export function useSync() {
   const token = useAuthStore(s => s.token);
   const user = useAuthStore(s => s.user);
+  const logout = useAuthStore(s => s.logout);
   const setMessages = useChatStore(s => s.setMessages);
   const setWsStatus = useChatStore(s => s.setWsStatus);
 
@@ -48,7 +49,11 @@ export function useSync() {
       provider = new WebSocketProvider(engine, {
         url: `${WS_URL}?room=${ROOM_ID}`,
         token,
+        username: user.username,
         onStatusChange: setWsStatus,
+        // Token rejected by server — drop it so the user re-authenticates
+        // instead of looping reconnects with a dead token.
+        onAuthError: () => { void logout(); },
       });
       providerRef.current = provider;
     });

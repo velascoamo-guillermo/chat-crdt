@@ -1,7 +1,6 @@
 import * as Y from 'yjs';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import type { WebSocket } from 'ws';
-import type { MessageDto } from '@chat-crdt/shared';
 
 export class RoomState {
   readonly doc: Y.Doc;
@@ -11,10 +10,6 @@ export class RoomState {
   constructor(public readonly roomId: string) {
     this.doc = new Y.Doc();
     this.awareness = new awarenessProtocol.Awareness(this.doc);
-  }
-
-  getMessages(): MessageDto[] {
-    return this.doc.getArray<MessageDto>('messages').toArray();
   }
 
   destroy() {

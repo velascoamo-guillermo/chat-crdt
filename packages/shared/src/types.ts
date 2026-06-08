@@ -20,6 +20,9 @@ export interface AuthResponse {
   user: UserDto;
 }
 
+/** Max chat message length. Enforced client-side (engine) and bounds WS payload size. */
+export const MAX_MESSAGE_LENGTH = 4000;
+
 // const object instead of enum — avoids dual-package hazard in ESM/CJS contexts
 export const WsMsgType = {
   SYNC: 0,

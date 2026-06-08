@@ -14,7 +14,6 @@ model User {
   username    String       @unique
   password    String       @db.VarChar(255)
   createdAt   DateTime     @default(now())
-  messages    Message[]
   memberships RoomMember[]
 }
 
@@ -23,7 +22,6 @@ model Room {
   name        String       @unique
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
-  messages    Message[]
   yjsState    Bytes?
   memberships RoomMember[]
 }
@@ -37,18 +35,5 @@ model RoomMember {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([roomId, userId])
-  @@index([userId])
-}
-
-model Message {
-  id        String   @id @default(uuid())
-  content   String
-  createdAt DateTime @default(now())
-  userId    String
-  roomId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
-
-  @@index([roomId, createdAt])
   @@index([userId])
 }

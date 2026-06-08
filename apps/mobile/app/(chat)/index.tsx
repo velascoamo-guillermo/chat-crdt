@@ -1,5 +1,6 @@
 import { useCallback, useRef } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, StyleSheet } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { FlashList } from '@shopify/flash-list';
 import type { MessageDto } from '@chat-crdt/shared';
 import { useChatStore } from '../../src/store/chat.store';
@@ -28,11 +29,7 @@ export default function ChatScreen() {
   );
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
+    <KeyboardAvoidingView style={styles.container} behavior="padding">
       <ChatHeader wsStatus={wsStatus} onlineCount={onlineCount} onLogout={logout} />
 
       <View style={styles.list}>

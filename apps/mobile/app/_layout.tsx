@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { useAuthStore } from '../src/store/auth.store';
 
 function AuthGate({ children }: { children: React.ReactNode }) {
@@ -26,8 +27,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
 export default function RootLayout() {
   return (
-    <AuthGate>
-      <Stack screenOptions={{ headerShown: false }} />
-    </AuthGate>
+    <KeyboardProvider>
+      <AuthGate>
+        <Stack screenOptions={{ headerShown: false }} />
+      </AuthGate>
+    </KeyboardProvider>
   );
 }

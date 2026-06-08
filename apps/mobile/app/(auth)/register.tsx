@@ -1,8 +1,10 @@
 import { useCallback, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/store/auth.store';
-import { Host, Column, Text, TextInput, Button, useNativeState, theme } from '../../src/ui';
+import { Host, Column, Text, TextInput, Button, Icon, Spacer, useNativeState, grow, theme } from '../../src/ui';
+
+const H_PADDING = 24;
 
 export default function RegisterScreen() {
   const email = useNativeState('');
@@ -11,6 +13,8 @@ export default function RegisterScreen() {
   const [loading, setLoading] = useState(false);
   const register = useAuthStore(s => s.register);
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const contentWidth = width - H_PADDING * 2;
 
   const handleRegister = useCallback(async () => {
     const e = email.value.trim();
@@ -40,10 +44,13 @@ export default function RegisterScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <Host matchContents={{ vertical: true }} style={styles.host}>
-        <Column spacing={12} style={{ padding: 24 }}>
-          <Text textStyle={{ fontSize: 28, fontWeight: '700', color: theme.textPrimary, textAlign: 'center' }}>
-            Create Account
-          </Text>
+        <Column spacing={16} alignment="center" style={styles.column}>
+          <Icon name="person.crop.circle.badge.plus" size={56} color={theme.accent} />
+          <Text textStyle={styles.title}>Create Account</Text>
+          <Text textStyle={styles.subtitle}>Join the conversation</Text>
+
+          <Spacer />
+
           <TextInput
             value={email}
             placeholder="Email"
@@ -51,14 +58,18 @@ export default function RegisterScreen() {
             autoCapitalize="none"
             keyboardType="email-address"
             autoComplete="email"
-            textStyle={{ fontSize: 16, color: theme.textPrimary }}
+            modifiers={grow()}
+            style={styles.field}
+            textStyle={styles.fieldText}
           />
           <TextInput
             value={username}
             placeholder="Username"
             placeholderTextColor={theme.placeholder}
             autoCapitalize="none"
-            textStyle={{ fontSize: 16, color: theme.textPrimary }}
+            modifiers={grow()}
+            style={styles.field}
+            textStyle={styles.fieldText}
           />
           <TextInput
             value={password}
@@ -66,14 +77,21 @@ export default function RegisterScreen() {
             placeholderTextColor={theme.placeholder}
             secureTextEntry
             autoComplete="password"
-            textStyle={{ fontSize: 16, color: theme.textPrimary }}
+            modifiers={grow()}
+            style={styles.field}
+            textStyle={styles.fieldText}
           />
+
           <Button
-            variant="filled"
-            label={loading ? 'Creating…' : 'Register'}
+            variant="borderless"
             onPress={handleRegister}
-            style={{ backgroundColor: theme.accent, borderRadius: theme.radius.md }}
-          />
+            disabled={loading}
+            style={{ width: contentWidth, backgroundColor: theme.accent, borderRadius: theme.radius.lg, paddingVertical: 16 }}
+          >
+            <Text modifiers={grow()} textStyle={styles.buttonLabel}>
+              {loading ? 'Creating…' : 'Register'}
+            </Text>
+          </Button>
           <Button
             variant="text"
             label="Have an account? Login"
@@ -88,4 +106,15 @@ export default function RegisterScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg, justifyContent: 'center' },
   host: { backgroundColor: theme.bg },
+  column: { paddingHorizontal: H_PADDING, paddingVertical: 32 },
+  title: { fontSize: 30, fontWeight: '700', color: theme.textPrimary, textAlign: 'center' },
+  subtitle: { fontSize: 15, color: theme.textSecondary, textAlign: 'center' },
+  field: {
+    backgroundColor: theme.surface,
+    borderRadius: theme.radius.lg,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  fieldText: { fontSize: 16, color: theme.textPrimary },
+  buttonLabel: { fontSize: 17, fontWeight: '600', color: '#ffffff', textAlign: 'center' },
 });

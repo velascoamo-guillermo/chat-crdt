@@ -1,8 +1,10 @@
 import { useCallback, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, StyleSheet, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/store/auth.store';
-import { Host, Column, Text, TextInput, Button, useNativeState, theme } from '../../src/ui';
+import { Host, Column, Text, TextInput, Button, Icon, Spacer, useNativeState, grow, theme } from '../../src/ui';
+
+const H_PADDING = 24;
 
 export default function LoginScreen() {
   const email = useNativeState('');
@@ -10,6 +12,8 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const login = useAuthStore(s => s.login);
   const router = useRouter();
+  const { width } = useWindowDimensions();
+  const contentWidth = width - H_PADDING * 2;
 
   const handleLogin = useCallback(async () => {
     if (loading) return;
@@ -35,10 +39,13 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <Host matchContents={{ vertical: true }} style={styles.host}>
-        <Column spacing={12} style={{ padding: 24 }}>
-          <Text textStyle={{ fontSize: 28, fontWeight: '700', color: theme.textPrimary, textAlign: 'center' }}>
-            Chat CRDT
-          </Text>
+        <Column spacing={16} alignment="center" style={styles.column}>
+          <Icon name="bubble.left.and.bubble.right.fill" size={56} color={theme.accent} />
+          <Text textStyle={styles.title}>Chat CRDT</Text>
+          <Text textStyle={styles.subtitle}>Sign in to continue</Text>
+
+          <Spacer />
+
           <TextInput
             value={email}
             placeholder="Email"
@@ -46,7 +53,9 @@ export default function LoginScreen() {
             autoCapitalize="none"
             keyboardType="email-address"
             autoComplete="email"
-            textStyle={{ fontSize: 16, color: theme.textPrimary }}
+            modifiers={grow()}
+            style={styles.field}
+            textStyle={styles.fieldText}
           />
           <TextInput
             value={password}
@@ -54,14 +63,21 @@ export default function LoginScreen() {
             placeholderTextColor={theme.placeholder}
             secureTextEntry
             autoComplete="password"
-            textStyle={{ fontSize: 16, color: theme.textPrimary }}
+            modifiers={grow()}
+            style={styles.field}
+            textStyle={styles.fieldText}
           />
+
           <Button
-            variant="filled"
-            label={loading ? 'Logging in…' : 'Login'}
+            variant="borderless"
             onPress={handleLogin}
-            style={{ backgroundColor: theme.accent, borderRadius: theme.radius.md }}
-          />
+            disabled={loading}
+            style={{ width: contentWidth, backgroundColor: theme.accent, borderRadius: theme.radius.lg, paddingVertical: 16 }}
+          >
+            <Text modifiers={grow()} textStyle={styles.buttonLabel}>
+              {loading ? 'Logging in…' : 'Login'}
+            </Text>
+          </Button>
           <Button
             variant="text"
             label="No account? Register"
@@ -76,4 +92,15 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg, justifyContent: 'center' },
   host: { backgroundColor: theme.bg },
+  column: { paddingHorizontal: 24, paddingVertical: 32 },
+  title: { fontSize: 30, fontWeight: '700', color: theme.textPrimary, textAlign: 'center' },
+  subtitle: { fontSize: 15, color: theme.textSecondary, textAlign: 'center' },
+  field: {
+    backgroundColor: theme.surface,
+    borderRadius: theme.radius.lg,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  fieldText: { fontSize: 16, color: theme.textPrimary },
+  buttonLabel: { fontSize: 17, fontWeight: '600', color: '#ffffff', textAlign: 'center' },
 });

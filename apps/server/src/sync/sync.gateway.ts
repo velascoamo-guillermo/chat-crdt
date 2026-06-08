@@ -59,18 +59,10 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       if (!room) return;
 
       const update = Buffer.from(payload.update, 'base64');
-      // Apply to server doc so it stays in sync with other instances
+      // Apply to server doc with origin 'redis'. The doc 'update' handler
+      // (registered per room) fans this out to local clients and skips
+      // re-publishing it back to Redis.
       Y.applyUpdate(room.doc, update, 'redis');
-
-      // Fan out to local clients
-      const encoder = encoding.createEncoder();
-      encoding.writeVarUint(encoder, MSG_SYNC);
-      syncProtocol.writeUpdate(encoder, update);
-      const msg = encoding.toUint8Array(encoder);
-
-      room.clients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) client.send(msg);
-      });
     });
   }
 
@@ -150,23 +142,13 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       if (msgType === MSG_SYNC) {
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MSG_SYNC);
-        const syncState = syncProtocol.readSyncMessage(decoder, encoder, room.doc, client);
+        // readSyncMessage applies the client's update to room.doc with `client`
+        // as the transaction origin. Local fan-out, Redis publish and persist
+        // are all driven from the doc 'update' handler in registerRoomUpdateHandler.
+        syncProtocol.readSyncMessage(decoder, encoder, room.doc, client);
 
         if (encoding.length(encoder) > 1) {
           client.send(encoding.toUint8Array(encoder));
-        }
-
-        // Broadcast incremental updates from clients to other server instances
-        // syncState 1 = syncStep2 (client sending us its diff), 2 = update
-        if (syncState === 1 || syncState === 2) {
-          // Capture the incremental update that was just applied
-          const update = Y.encodeStateAsUpdate(room.doc);
-          const payload: RedisPayload = {
-            origin: this.instanceId,
-            update: Buffer.from(update).toString('base64'),
-          };
-          this.pub.publish(`room:update:${room.roomId}`, JSON.stringify(payload));
-          this.schedulePersist(room);
         }
       } else if (msgType === MSG_AWARENESS) {
         const update = decoding.readVarUint8Array(decoder);
@@ -190,10 +172,42 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     if (!p) {
       const room = new RoomState(roomId);
       this.rooms.set(roomId, room);
-      p = this.loadRoomState(room).then(() => room);
+      p = this.loadRoomState(room).then(() => {
+        this.registerRoomUpdateHandler(room);
+        return room;
+      });
       this.roomInitMap.set(roomId, p);
     }
     return p;
+  }
+
+  /**
+   * Single source of truth for doc propagation. Fires on every doc mutation
+   * with the true incremental update and its transaction origin:
+   * - a client WebSocket  → another instance hasn't seen it: publish to Redis + persist
+   * - 'redis'             → already came from another instance: fan out locally only
+   * In all cases, fan the delta out to local clients except the originating one.
+   */
+  private registerRoomUpdateHandler(room: RoomState): void {
+    room.doc.on('update', (update: Uint8Array, origin: unknown) => {
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, MSG_SYNC);
+      syncProtocol.writeUpdate(encoder, update);
+      const msg = encoding.toUint8Array(encoder);
+
+      room.clients.forEach(client => {
+        if (client !== origin && client.readyState === WebSocket.OPEN) client.send(msg);
+      });
+
+      if (origin === 'redis') return; // came from another instance — don't echo back
+
+      const payload: RedisPayload = {
+        origin: this.instanceId,
+        update: Buffer.from(update).toString('base64'),
+      };
+      this.pub.publish(`room:update:${room.roomId}`, JSON.stringify(payload));
+      this.schedulePersist(room);
+    });
   }
 
   private async loadRoomState(room: RoomState): Promise<void> {

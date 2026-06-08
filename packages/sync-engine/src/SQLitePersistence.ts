@@ -37,24 +37,39 @@ function base64ToUint8(b64: string): Uint8Array {
   return bytes;
 }
 
+/** Coalesce bursts of doc updates into a single write. */
+const PERSIST_DEBOUNCE_MS = 500;
+
 export class SQLitePersistence {
   // Storage key uses roomId (stable across restarts) not doc.guid (random per instance)
   private readonly key: string;
   private loaded = false;
   private destroyed = false;
   private readonly docUpdateHandler: () => void;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly engine: SyncEngine,
     private readonly storage: IStorage,
+    private readonly debounceMs: number = PERSIST_DEBOUNCE_MS,
   ) {
     this.key = `yjs:${engine.roomId}`;
+    // Debounce: a rapid burst of updates (e.g. initial sync) writes once.
     this.docUpdateHandler = () => {
-      const state = engine.encodeState();
-      storage.setItem(this.key, uint8ToBase64(state)).catch(() => {
-        // persist errors are non-fatal — next write will retry
-      });
+      if (this.persistTimer) clearTimeout(this.persistTimer);
+      this.persistTimer = setTimeout(() => {
+        this.persistTimer = null;
+        this.persist();
+      }, this.debounceMs);
     };
+  }
+
+  private persist(): void {
+    if (this.destroyed) return;
+    const state = this.engine.encodeState();
+    this.storage.setItem(this.key, uint8ToBase64(state)).catch(() => {
+      // persist errors are non-fatal — next write will retry
+    });
   }
 
   async load(): Promise<void> {
@@ -74,7 +89,13 @@ export class SQLitePersistence {
   }
 
   destroy(): void {
-    this.destroyed = true;
     this.engine.doc.off('update', this.docUpdateHandler);
+    // Flush a pending debounced write so the last update isn't lost on unmount.
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+      this.persist();
+    }
+    this.destroyed = true;
   }
 }

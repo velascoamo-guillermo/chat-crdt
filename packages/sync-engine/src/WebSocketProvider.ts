@@ -15,8 +15,19 @@ export interface WebSocketProviderConfig {
   url: string;
   token: string;
   onStatusChange?: (status: ProviderStatus) => void;
+  /**
+   * Called when the server closes the socket with an auth-failure code (4001
+   * or any 4000–4099). The token is bad/expired — retrying won't help, so the
+   * app should log out or refresh the token instead.
+   */
+  onAuthError?: (code: number) => void;
   /** Test-only hook: intercepts outgoing binary messages instead of opening a real WebSocket */
   _testSend?: (data: Uint8Array) => void;
+}
+
+/** Close codes in this range mean "don't bother reconnecting with the same token". */
+function isAuthCloseCode(code: number): boolean {
+  return code >= 4000 && code <= 4099;
 }
 
 export class WebSocketProvider {
@@ -64,7 +75,9 @@ export class WebSocketProvider {
     if (this.destroyed) return;
     this.setStatus('connecting');
 
-    const url = `${this.config.url}?token=${this.config.token}`;
+    // Append token without assuming the base URL has no query string already.
+    const sep = this.config.url.includes('?') ? '&' : '?';
+    const url = `${this.config.url}${sep}token=${encodeURIComponent(this.config.token)}`;
     this.ws = new WebSocket(url);
     this.ws.binaryType = 'arraybuffer';
 
@@ -90,11 +103,16 @@ export class WebSocketProvider {
       this.handleServerMessage(data);
     };
 
-    this.ws.onclose = () => {
-      if (!this.destroyed) {
-        this.setStatus('disconnected');
-        this.scheduleRetry();
+    this.ws.onclose = (event) => {
+      if (this.destroyed) return;
+      this.setStatus('disconnected');
+      const code = (event as { code?: number }).code ?? 0;
+      if (isAuthCloseCode(code)) {
+        // Bad/expired token — stop the backoff loop and let the app react.
+        this.config.onAuthError?.(code);
+        return;
       }
+      this.scheduleRetry();
     };
 
     this.ws.onerror = () => {

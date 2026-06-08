@@ -9,21 +9,35 @@ datasource db {
 }
 
 model User {
-  id        String    @id @default(uuid())
-  email     String    @unique
-  username  String    @unique
-  password  String    @db.VarChar(255)
-  createdAt DateTime  @default(now())
-  messages  Message[]
+  id          String       @id @default(uuid())
+  email       String       @unique
+  username    String       @unique
+  password    String       @db.VarChar(255)
+  createdAt   DateTime     @default(now())
+  messages    Message[]
+  memberships RoomMember[]
 }
 
 model Room {
-  id        String    @id @default(uuid())
-  name      String    @unique
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  messages  Message[]
-  yjsState  Bytes?
+  id          String       @id @default(uuid())
+  name        String       @unique
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  messages    Message[]
+  yjsState    Bytes?
+  memberships RoomMember[]
+}
+
+model RoomMember {
+  roomId    String
+  userId    String
+  role      String   @default("member")
+  joinedAt  DateTime @default(now())
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, userId])
+  @@index([userId])
 }
 
 model Message {

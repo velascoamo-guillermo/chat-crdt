@@ -15,6 +15,7 @@ import * as decoding from 'lib0/decoding';
 import type Redis from 'ioredis';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
+import { RoomsService } from '../rooms/rooms.service';
 import { RoomState } from './room-state';
 import { randomUUID } from 'crypto';
 
@@ -58,6 +59,7 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    private readonly roomsService: RoomsService,
     @Inject('REDIS_PUB') private readonly pub: Redis,
     @Inject('REDIS_SUB') private readonly sub: Redis,
   ) {}
@@ -99,11 +101,23 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       .map(s => s.trim());
     const token = offered[0] === 'bearer' ? offered[1] ?? '' : '';
 
+    let userId: string;
     try {
-      this.jwt.verify(token);
+      const payload = this.jwt.verify(token) as { sub: string };
+      userId = payload.sub;
     } catch {
       client.close(4001, 'Unauthorized');
       return;
+    }
+
+    // 'default' is an open lobby — any authenticated user may join.
+    // All other rooms require explicit membership (POST /rooms or POST /rooms/:name/join).
+    if (roomId !== 'default') {
+      const allowed = await this.roomsService.isMember(roomId, userId);
+      if (!allowed) {
+        client.close(4003, 'Forbidden');
+        return;
+      }
     }
 
     const room = await this.getOrCreateRoom(roomId);

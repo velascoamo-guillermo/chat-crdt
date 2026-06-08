@@ -35,14 +35,15 @@ Offline-first real-time chat with CRDT sync. Single-room MVP.
 
 | Layer | Technology |
 |---|---|
-| Mobile | Expo Router, React Native 0.76, FlashList |
+| Mobile | Expo SDK 56, React Native 0.85, Expo Router, FlashList |
+| Native UI | `@expo/ui` (login + register screens as native islands) |
 | CRDT sync | Yjs, y-protocols, `@chat-crdt/sync-engine` |
 | Mobile storage | op-sqlite (SQLite) |
 | State | Zustand |
 | Backend | NestJS v11, WebSocket (ws) |
-| Auth | JWT (passport-jwt) |
+| Auth | JWT (passport-jwt), WS subprotocol auth |
 | Database | PostgreSQL 16 + Prisma 5 |
-| Realtime fan-out | Redis 7 pub/sub |
+| Realtime fan-out | Redis 7 pub/sub + presence tracking |
 
 ## Quick start
 
@@ -83,6 +84,10 @@ chat-crdt/
 
 See [docs/adr/](docs/adr/) for documented architecture decisions.
 
+**Messages are CRDT-only.** No `Message` rows in the database — chat history lives entirely in Yjs state, persisted as a single `yjsState` blob on the `Room` model. This keeps the DB schema minimal and makes CRDT the single source of truth.
+
+**Room authorization via `RoomMember`.** Every WebSocket connection is authorized against the `RoomMember` join table. Users can only sync rooms they belong to.
+
 ## Offline-first flow
 
 1. User sends message → inserted into local `Y.Array` immediately (optimistic)
@@ -100,6 +105,13 @@ cd packages/sync-engine && bun test
 # server unit tests
 cd apps/server && npx jest
 ```
+
+## Server features
+
+- **WS subprotocol auth** — JWT passed as WebSocket subprotocol, validated before room join
+- **Rate limiting** — per-connection message rate limiting in `SyncGateway`
+- **Presence** — online user tracking across Redis-connected server instances
+- **True-delta fan-out** — server computes and broadcasts only the delta, not full state
 
 ## ADRs
 

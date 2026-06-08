@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { View, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
-import { FlashList } from '@shopify/flash-list';
+import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import type { MessageDto } from '@chat-crdt/shared';
 import { useChatStore } from '../../src/store/chat.store';
 import { useSync } from '../../src/hooks/useSync';
@@ -18,7 +18,7 @@ export default function ChatScreen() {
   const { sendMessage, sendTyping, getAwareness } = useSync();
   const { typingUsers, onlineCount } = usePresence(getAwareness());
   const logout = useAuthStore(s => s.logout);
-  const listRef = useRef<FlashList<MessageDto>>(null);
+  const listRef = useRef<FlashListRef<MessageDto>>(null);
 
   const handleSend = useCallback(
     (content: string) => {

@@ -14,6 +14,8 @@ export type ProviderStatus = 'disconnected' | 'connecting' | 'connected';
 export interface WebSocketProviderConfig {
   url: string;
   token: string;
+  /** Username announced via awareness so other clients count + label this user. */
+  username?: string;
   onStatusChange?: (status: ProviderStatus) => void;
   /**
    * Called when the server closes the socket with an auth-failure code (4001
@@ -45,6 +47,8 @@ export class WebSocketProvider {
     private readonly config: WebSocketProviderConfig,
   ) {
     this.awareness = new awarenessProtocol.Awareness(engine.doc);
+    // Announce presence immediately so we're counted even before we type.
+    this.awareness.setLocalState({ username: config.username, isTyping: false });
 
     this.docUpdateHandler = (update: Uint8Array, origin: unknown) => {
       if (this.destroyed) return;
@@ -75,10 +79,10 @@ export class WebSocketProvider {
     if (this.destroyed) return;
     this.setStatus('connecting');
 
-    // Append token without assuming the base URL has no query string already.
-    const sep = this.config.url.includes('?') ? '&' : '?';
-    const url = `${this.config.url}${sep}token=${encodeURIComponent(this.config.token)}`;
-    this.ws = new WebSocket(url);
+    // Token travels in the WebSocket subprotocol, never the query string, so it
+    // stays out of access logs, proxies and browser history. Server reads it
+    // from the Sec-WebSocket-Protocol header.
+    this.ws = new WebSocket(this.config.url, ['bearer', this.config.token]);
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.onopen = () => {
@@ -86,6 +90,7 @@ export class WebSocketProvider {
       this.setStatus('connected');
       this.sendSyncStep1();
       this.flush();
+      this.broadcastLocalAwareness();
     };
 
     this.ws.onmessage = (event: MessageEvent) => {
@@ -188,6 +193,12 @@ export class WebSocketProvider {
     for (const [key, value] of Object.entries(state)) {
       this.awareness.setLocalStateField(key, value);
     }
+    this.broadcastLocalAwareness();
+  }
+
+  /** Encode + send this client's current awareness state to the server. */
+  private broadcastLocalAwareness(): void {
+    if (this.destroyed) return;
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, MSG_AWARENESS);
     const update = awarenessProtocol.encodeAwarenessUpdate(this.awareness, [

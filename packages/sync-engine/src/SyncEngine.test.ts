@@ -1,5 +1,5 @@
 import { SyncEngine } from './SyncEngine';
-import * as Y from 'yjs';
+import { MAX_MESSAGE_LENGTH } from '@chat-crdt/shared';
 
 describe('SyncEngine', () => {
   describe('sendMessage', () => {
@@ -27,6 +27,21 @@ describe('SyncEngine', () => {
       const msgs = engine.getMessages();
       expect(msgs).toHaveLength(3);
       expect(msgs.map(m => m.content)).toEqual(['first', 'second', 'third']);
+    });
+
+    it('trims content and rejects empty/whitespace messages', () => {
+      const engine = new SyncEngine({ roomId: 'r1', userId: 'u1', username: 'alice' });
+      expect(engine.sendMessage('  padded  ').content).toBe('padded');
+      expect(() => engine.sendMessage('   ')).toThrow();
+      expect(() => engine.sendMessage('')).toThrow();
+      expect(engine.getMessages()).toHaveLength(1);
+    });
+
+    it('rejects messages over MAX_MESSAGE_LENGTH', () => {
+      const engine = new SyncEngine({ roomId: 'r1', userId: 'u1', username: 'alice' });
+      expect(() => engine.sendMessage('x'.repeat(MAX_MESSAGE_LENGTH + 1))).toThrow();
+      expect(engine.sendMessage('x'.repeat(MAX_MESSAGE_LENGTH))).toBeTruthy();
+      expect(engine.getMessages()).toHaveLength(1);
     });
   });
 

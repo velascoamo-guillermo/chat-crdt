@@ -23,9 +23,22 @@ const MSG_AWARENESS = 1;
 const ROOM_GC_DELAY_MS = 30_000;
 const PERSIST_DEBOUNCE_MS = 5_000;
 
+const UPDATE_CHANNEL_PREFIX = 'room:update:';
+const AWARENESS_CHANNEL_PREFIX = 'room:awareness:';
+
+// DoS guards: reject oversized frames and clients that flood the socket.
+const MAX_WS_MESSAGE_BYTES = 64 * 1024; // 64 KiB per frame
+const RATE_LIMIT_WINDOW_MS = 1_000;
+const RATE_LIMIT_MAX_MSGS = 60; // per client per window
+
 interface RedisPayload {
   origin: string;
   update: string; // base64 incremental update
+}
+
+interface RateState {
+  count: number;
+  windowStart: number;
 }
 
 @WebSocketGateway({ path: '/sync' })
@@ -38,6 +51,9 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   private readonly roomInitMap = new Map<string, Promise<RoomState>>();
   private readonly clientRoom = new WeakMap<WebSocket, string>();
   private readonly persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly clientRate = new WeakMap<WebSocket, RateState>();
+  // Awareness clientIDs announced by each socket, so we can clear them on disconnect.
+  private readonly awarenessIds = new WeakMap<WebSocket, Set<number>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -47,29 +63,41 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   ) {}
 
   onModuleInit() {
-    this.sub.psubscribe('room:update:*');
+    this.sub.psubscribe(`${UPDATE_CHANNEL_PREFIX}*`, `${AWARENESS_CHANNEL_PREFIX}*`);
     this.sub.on('pmessage', (_pattern: string, channel: string, message: string) => {
       const payload: RedisPayload = JSON.parse(message);
 
-      // Skip updates originated by this instance — clients already received them inline
+      // Skip messages this instance published — local clients already received them.
       if (payload.origin === this.instanceId) return;
 
-      const roomId = channel.replace('room:update:', '');
-      const room = this.rooms.get(roomId);
-      if (!room) return;
-
-      const update = Buffer.from(payload.update, 'base64');
-      // Apply to server doc with origin 'redis'. The doc 'update' handler
-      // (registered per room) fans this out to local clients and skips
-      // re-publishing it back to Redis.
-      Y.applyUpdate(room.doc, update, 'redis');
+      if (channel.startsWith(UPDATE_CHANNEL_PREFIX)) {
+        const room = this.rooms.get(channel.slice(UPDATE_CHANNEL_PREFIX.length));
+        if (!room) return;
+        // Apply with origin 'redis'. The doc 'update' handler fans this out to
+        // local clients and skips re-publishing it back to Redis.
+        Y.applyUpdate(room.doc, Buffer.from(payload.update, 'base64'), 'redis');
+      } else if (channel.startsWith(AWARENESS_CHANNEL_PREFIX)) {
+        const room = this.rooms.get(channel.slice(AWARENESS_CHANNEL_PREFIX.length));
+        if (!room) return;
+        // Same pattern: the awareness 'update' handler fans out locally.
+        awarenessProtocol.applyAwarenessUpdate(
+          room.awareness,
+          Buffer.from(payload.update, 'base64'),
+          'redis',
+        );
+      }
     });
   }
 
   async handleConnection(client: WebSocket, req: IncomingMessage) {
     const url = new URL(req.url!, 'http://localhost');
     const roomId = url.searchParams.get('room') ?? 'default';
-    const token = url.searchParams.get('token') ?? '';
+
+    // Token arrives via Sec-WebSocket-Protocol: "bearer, <jwt>" — not the query string.
+    const offered = (req.headers['sec-websocket-protocol'] ?? '')
+      .split(',')
+      .map(s => s.trim());
+    const token = offered[0] === 'bearer' ? offered[1] ?? '' : '';
 
     try {
       this.jwt.verify(token);
@@ -95,6 +123,18 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     syncProtocol.writeSyncStep2(enc2, room.doc, new Uint8Array());
     client.send(encoding.toUint8Array(enc2));
 
+    // Awareness snapshot — so onlineCount / typing are correct before the next change
+    const states = room.awareness.getStates();
+    if (states.size > 0) {
+      const enc3 = encoding.createEncoder();
+      encoding.writeVarUint(enc3, MSG_AWARENESS);
+      encoding.writeVarUint8Array(
+        enc3,
+        awarenessProtocol.encodeAwarenessUpdate(room.awareness, [...states.keys()]),
+      );
+      client.send(encoding.toUint8Array(enc3));
+    }
+
     const onMessage = (data: RawData) => this.handleMessage(client, room, data as Buffer);
     const onClose = () => client.removeAllListeners('message');
     client.on('message', onMessage);
@@ -112,6 +152,16 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     if (!room) return;
 
     room.clients.delete(client);
+
+    // Clear this socket's awareness states so it doesn't linger as a ghost
+    // online user / stuck typing indicator. The awareness 'update' handler
+    // propagates the removal to local clients and other instances.
+    const ids = this.awarenessIds.get(client);
+    if (ids && ids.size > 0) {
+      awarenessProtocol.removeAwarenessStates(room.awareness, [...ids], 'disconnect');
+      this.awarenessIds.delete(client);
+    }
+
     this.logger.log(`Client disconnected from room "${roomId}". Room size: ${room.clients.size}`);
 
     if (room.clients.size === 0) {
@@ -135,6 +185,16 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   }
 
   private handleMessage(client: WebSocket, room: RoomState, data: Buffer) {
+    if (data.length > MAX_WS_MESSAGE_BYTES) {
+      this.logger.warn(`Oversized frame (${data.length}B) in room "${room.roomId}" — closing client`);
+      client.close(1009, 'Message too large');
+      return;
+    }
+    if (this.isRateLimited(client)) {
+      this.logger.warn(`Rate limit exceeded in room "${room.roomId}" — closing client`);
+      client.close(4029, 'Rate limit exceeded');
+      return;
+    }
     try {
       const decoder = decoding.createDecoder(new Uint8Array(data));
       const msgType = decoding.readVarUint(decoder);
@@ -151,20 +211,26 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
           client.send(encoding.toUint8Array(encoder));
         }
       } else if (msgType === MSG_AWARENESS) {
+        // Apply with `client` as origin; the awareness 'update' handler tracks
+        // the client's IDs, fans out to local clients and publishes to Redis.
         const update = decoding.readVarUint8Array(decoder);
         awarenessProtocol.applyAwarenessUpdate(room.awareness, update, client);
-
-        const enc = encoding.createEncoder();
-        encoding.writeVarUint(enc, MSG_AWARENESS);
-        encoding.writeVarUint8Array(enc, update);
-        const msg = encoding.toUint8Array(enc);
-        room.clients.forEach(c => {
-          if (c !== client && c.readyState === WebSocket.OPEN) c.send(msg);
-        });
       }
     } catch (err: any) {
       this.logger.error(`Error handling message: ${err.message}`);
     }
+  }
+
+  /** Fixed-window per-client message rate limiter. */
+  private isRateLimited(client: WebSocket): boolean {
+    const now = Date.now();
+    const state = this.clientRate.get(client);
+    if (!state || now - state.windowStart >= RATE_LIMIT_WINDOW_MS) {
+      this.clientRate.set(client, { count: 1, windowStart: now });
+      return false;
+    }
+    state.count++;
+    return state.count > RATE_LIMIT_MAX_MSGS;
   }
 
   private getOrCreateRoom(roomId: string): Promise<RoomState> {
@@ -174,6 +240,7 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
       this.rooms.set(roomId, room);
       p = this.loadRoomState(room).then(() => {
         this.registerRoomUpdateHandler(room);
+        this.registerRoomAwarenessHandler(room);
         return room;
       });
       this.roomInitMap.set(roomId, p);
@@ -205,9 +272,57 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         origin: this.instanceId,
         update: Buffer.from(update).toString('base64'),
       };
-      this.pub.publish(`room:update:${room.roomId}`, JSON.stringify(payload));
+      this.pub.publish(`${UPDATE_CHANNEL_PREFIX}${room.roomId}`, JSON.stringify(payload));
       this.schedulePersist(room);
     });
+  }
+
+  /**
+   * Single source of truth for awareness (presence/typing) propagation.
+   * Mirrors registerRoomUpdateHandler: fan out to local clients, track each
+   * socket's controlled clientIDs for disconnect cleanup, and forward to other
+   * instances via Redis unless the change itself came from Redis.
+   */
+  private registerRoomAwarenessHandler(room: RoomState): void {
+    room.awareness.on(
+      'update',
+      (
+        { added, updated, removed }: { added: number[]; updated: number[]; removed: number[] },
+        origin: unknown,
+      ) => {
+        const changed = [...added, ...updated, ...removed];
+        if (changed.length === 0) return;
+
+        if (origin instanceof WebSocket && room.clients.has(origin)) {
+          let set = this.awarenessIds.get(origin);
+          if (!set) {
+            set = new Set();
+            this.awarenessIds.set(origin, set);
+          }
+          for (const id of added) set.add(id);
+          for (const id of updated) set.add(id);
+          for (const id of removed) set.delete(id);
+        }
+
+        const update = awarenessProtocol.encodeAwarenessUpdate(room.awareness, changed);
+        const enc = encoding.createEncoder();
+        encoding.writeVarUint(enc, MSG_AWARENESS);
+        encoding.writeVarUint8Array(enc, update);
+        const msg = encoding.toUint8Array(enc);
+
+        room.clients.forEach(client => {
+          if (client !== origin && client.readyState === WebSocket.OPEN) client.send(msg);
+        });
+
+        if (origin === 'redis') return; // already from another instance
+
+        const payload: RedisPayload = {
+          origin: this.instanceId,
+          update: Buffer.from(update).toString('base64'),
+        };
+        this.pub.publish(`${AWARENESS_CHANNEL_PREFIX}${room.roomId}`, JSON.stringify(payload));
+      },
+    );
   }
 
   private async loadRoomState(room: RoomState): Promise<void> {

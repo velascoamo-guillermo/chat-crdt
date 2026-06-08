@@ -49,6 +49,7 @@ export function useSync() {
       provider = new WebSocketProvider(engine, {
         url: `${WS_URL}?room=${ROOM_ID}`,
         token,
+        username: user.username,
         onStatusChange: setWsStatus,
         // Token rejected by server — drop it so the user re-authenticates
         // instead of looping reconnects with a dead token.

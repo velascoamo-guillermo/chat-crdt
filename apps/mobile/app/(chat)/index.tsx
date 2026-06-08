@@ -1,5 +1,12 @@
 import { useCallback, useRef } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import {
+  View,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  type NativeSyntheticEvent,
+  type NativeScrollEvent,
+} from 'react-native';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import type { MessageDto } from '@chat-crdt/shared';
 import { useChatStore } from '../../src/store/chat.store';
@@ -19,6 +26,19 @@ export default function ChatScreen() {
   const { typingUsers, onlineCount } = usePresence(getAwareness());
   const logout = useAuthStore(s => s.logout);
   const listRef = useRef<FlashListRef<MessageDto>>(null);
+  // Only auto-scroll to new messages when the user is already at the bottom,
+  // so reading older history isn't interrupted.
+  const atBottomRef = useRef(true);
+
+  const handleScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const distanceFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
+    atBottomRef.current = distanceFromBottom < 80;
+  }, []);
+
+  const handleContentSizeChange = useCallback(() => {
+    if (atBottomRef.current) listRef.current?.scrollToEnd({ animated: false });
+  }, []);
 
   const handleSend = useCallback(
     (content: string) => {
@@ -41,9 +61,8 @@ export default function ChatScreen() {
           data={messages}
           renderItem={({ item }) => <MessageItem message={item} />}
           keyExtractor={(item) => item.id}
-          onContentSizeChange={() =>
-            listRef.current?.scrollToEnd({ animated: false })
-          }
+          onScroll={handleScroll}
+          onContentSizeChange={handleContentSizeChange}
           contentContainerStyle={styles.listContent}
         />
       </View>

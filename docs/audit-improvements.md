@@ -4,6 +4,27 @@ Audit date: 2026-06-07. Scope: full stack — NestJS server (WS sync gateway, au
 
 Findings ordered by severity. Each item: location, problem, fix.
 
+## Status (updated 2026-06-08, branch `fix/sync-audit`)
+
+| # | Severity | Status |
+|---|----------|--------|
+| 1 WS URL double-? | 🔴 | ✅ Fixed |
+| 2 Redis full-state fan-out | 🔴 | ✅ Fixed (+ fixed same-instance broadcast gap) |
+| 3 Presence across instances | 🟠 | ✅ Fixed |
+| 4 Room authorization | 🟠 | ⏸ Deferred — needs `RoomMember` model + migration |
+| 5 JWT in query string | 🟠 | ✅ Fixed (Sec-WebSocket-Protocol) |
+| 6 No rate limiting | 🟠 | ✅ Fixed (throttler + WS caps) |
+| 7 JWT_SECRET not validated | 🟠 | ✅ Fixed (zod env schema) |
+| 8 WS retry never gives up | 🟡 | ✅ Fixed |
+| 9 SQLite full-doc write | 🟡 | ✅ Fixed (debounced) |
+| 10 atob/btoa in RN | 🟡 | ✅ Fixed (guarded polyfill) |
+| 11 Email not normalized | 🟡 | ✅ Fixed |
+| dist committed | 🟢 | ✅ Already gitignored on base |
+| scrollToEnd jank | 🟢 | ✅ Fixed (auto-scroll only when at bottom) |
+| Dead Message table | 🟢 | ⏸ Deferred — wire or drop (decision) |
+| JwtStrategy unused | 🟢 | ⏸ Deferred — no protected HTTP routes yet |
+| yjsState pruning | 🟢 | ⏸ Deferred — needs snapshot/GC strategy |
+
 ---
 
 ## 🔴 Critical

@@ -167,4 +167,34 @@ describe('SyncGateway', () => {
       expect(pub.publish).not.toHaveBeenCalled();  // not echoed back to Redis
     });
   });
+
+  describe('handleDisconnect', () => {
+    it('removes the client from the room and clears its awareness states', () => {
+      // The room-empty branch schedules a 30s GC setTimeout; fake timers
+      // keep it (and RoomState's Awareness 3s interval) from leaking.
+      jest.useFakeTimers();
+
+      const room = new RoomState('default');
+      (gateway as any).rooms.set('default', room);
+
+      const client = new FakeSocket();
+      room.clients.add(client);
+      (gateway as any).clientRoom.set(client, 'default');
+      (gateway as any).awarenessIds.set(client, new Set([42]));
+      room.awareness.states.set(42, { user: 'someone' });
+
+      gateway.handleDisconnect(client as any);
+
+      expect(room.clients.has(client)).toBe(false);
+      expect(room.awareness.getStates().has(42)).toBe(false);
+      expect((gateway as any).awarenessIds.has(client)).toBe(false);
+
+      jest.useRealTimers();
+    });
+
+    it('is a no-op for a socket that never joined a room', () => {
+      const client = new FakeSocket();
+      expect(() => gateway.handleDisconnect(client as any)).not.toThrow();
+    });
+  });
 });

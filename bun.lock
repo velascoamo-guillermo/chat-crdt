@@ -32,7 +32,6 @@
       "devDependencies": {
         "@babel/core": "^7.25.0",
         "@types/react": "~19.2.14",
-        "typescript": "~6.0.3",
       },
     },
     "apps/server": {
@@ -75,15 +74,11 @@
         "jest": "^29.0.0",
         "prisma": "^5",
         "ts-jest": "^29.4.9",
-        "typescript": "^5.8.0",
       },
     },
     "packages/shared": {
       "name": "@chat-crdt/shared",
       "version": "0.0.1",
-      "devDependencies": {
-        "typescript": "^5.8.0",
-      },
     },
     "packages/sync-engine": {
       "name": "@chat-crdt/sync-engine",
@@ -95,7 +90,6 @@
         "y-protocols": "^1.0.6",
       },
       "devDependencies": {
-        "typescript": "^5.8.0",
         "yjs": "^13.6.27",
       },
       "peerDependencies": {
@@ -1969,8 +1963,6 @@
     "@angular-devkit/schematics/rxjs": ["rxjs@7.8.1", "", { "dependencies": { "tslib": "^2.1.0" } }, "sha512-AA3TVj+0A2iuIoQkWEK/tqFjBq2j+6PO6Y0zJcvzLAFhEFIO3HL0vls9hWLncZbAAbK0mar7oZ4V079I/qPMxg=="],
 
     "@angular-devkit/schematics-cli/@inquirer/prompts": ["@inquirer/prompts@7.3.2", "", { "dependencies": { "@inquirer/checkbox": "^4.1.2", "@inquirer/confirm": "^5.1.6", "@inquirer/editor": "^4.2.7", "@inquirer/expand": "^4.0.9", "@inquirer/input": "^4.1.6", "@inquirer/number": "^3.0.9", "@inquirer/password": "^4.0.9", "@inquirer/rawlist": "^4.0.9", "@inquirer/search": "^3.0.9", "@inquirer/select": "^4.0.9" }, "peerDependencies": { "@types/node": ">=18" }, "optionalPeers": ["@types/node"] }, "sha512-G1ytyOoHh5BphmEBxSwALin3n1KGNYB6yImbICcRQdzXfOGbuJ9Jske/Of5Sebk339NSGGNfUshnzK8YWkTPsQ=="],
-
-    "@chat-crdt/mobile/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
     "@expo/cli/ora": ["ora@3.4.0", "", { "dependencies": { "chalk": "^2.4.2", "cli-cursor": "^2.1.0", "cli-spinners": "^2.0.0", "log-symbols": "^2.2.0", "strip-ansi": "^5.2.0", "wcwidth": "^1.0.1" } }, "sha512-eNwHudNbO1folBP3JsZ19v9azXWtQZjICdr3Q0TDPIaeBQ3mXLrh54wM+er0+hSp+dWKf+Z8KM58CYzEyIYxYg=="],
 

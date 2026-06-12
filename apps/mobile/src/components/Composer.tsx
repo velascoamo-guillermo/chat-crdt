@@ -1,5 +1,16 @@
 import { memo, useCallback, useRef } from 'react';
-import { Host, Row, Button, TextInput, useNativeState, grow, theme } from '../ui';
+import {
+  Host,
+  Row,
+  Button,
+  TextInput,
+  Icon,
+  useNativeState,
+  grow,
+  pillInput,
+  circleButton,
+  theme,
+} from '../ui';
 
 interface Props {
   onSend: (content: string) => void;
@@ -48,15 +59,12 @@ export const Composer = memo(function Composer({ onSend, sendTyping }: Props) {
           placeholderTextColor={theme.placeholder}
           returnKeyType="send"
           multiline
-          modifiers={grow()}
+          modifiers={[...grow(), ...pillInput()]}
           textStyle={{ fontSize: 15, color: theme.textPrimary }}
         />
-        <Button
-          variant="filled"
-          label="Send"
-          onPress={handleSend}
-          style={{ backgroundColor: theme.accent, borderRadius: theme.radius.pill }}
-        />
+        <Button onPress={handleSend} modifiers={circleButton()}>
+          <Icon name="arrow.up" size={18} color="#fff" />
+        </Button>
       </Row>
     </Host>
   );

@@ -40,6 +40,15 @@ describe('SyncGateway', () => {
     gateway = module.get(SyncGateway);
   });
 
+  afterEach(() => {
+    // RoomState's Awareness schedules a setInterval (y-protocols, 3s tick).
+    // Destroy any rooms the test created so that timer doesn't outlive the
+    // test and fire after jest tears down modules.
+    const rooms = (gateway as any).rooms as Map<string, { destroy(): void }>;
+    rooms?.forEach(room => room.destroy());
+    rooms?.clear();
+  });
+
   describe('handleConnection auth', () => {
     it('closes with 4001 when the token fails verification', async () => {
       jwt.verify.mockImplementation(() => {
@@ -51,6 +60,28 @@ describe('SyncGateway', () => {
 
       expect(client.lastCloseCode()).toBe(4001);
       expect(client.send).not.toHaveBeenCalled();
+    });
+
+    it('closes with 4003 when a valid user is not a member of a non-default room', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+      rooms.isMember.mockResolvedValue(false);
+
+      const client = new FakeSocket();
+      await gateway.handleConnection(client as any, fakeReq({ room: 'private-room', token: 'ok' }));
+
+      expect(rooms.isMember).toHaveBeenCalledWith('private-room', 'user-1');
+      expect(client.lastCloseCode()).toBe(4003);
+      expect(client.send).not.toHaveBeenCalled();
+    });
+
+    it('skips the membership check for the open "default" lobby', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+
+      const client = new FakeSocket();
+      await gateway.handleConnection(client as any, fakeReq({ room: 'default', token: 'ok' }));
+
+      expect(rooms.isMember).not.toHaveBeenCalled();
+      expect(client.send).toHaveBeenCalled(); // sync step1/step2 sent
     });
   });
 });

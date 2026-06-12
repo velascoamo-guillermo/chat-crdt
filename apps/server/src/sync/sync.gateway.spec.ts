@@ -149,5 +149,22 @@ describe('SyncGateway', () => {
         expect.any(String),
       );
     });
+
+    it('does not re-publish updates that arrived from Redis', () => {
+      const room = seedRoom('default');
+      const local = new FakeSocket();
+      room.clients.add(local);
+      pub.publish.mockClear();
+
+      // Build a delta from a separate source doc, then apply it as if from Redis.
+      const source = new Y.Doc();
+      source.getArray('messages').push([{ id: 'm2', content: 'from other instance' }]);
+      const delta = Y.encodeStateAsUpdate(source);
+
+      Y.applyUpdate(room.doc, delta, 'redis');
+
+      expect(local.send).toHaveBeenCalledTimes(1); // fanned out locally
+      expect(pub.publish).not.toHaveBeenCalled();  // not echoed back to Redis
+    });
   });
 });

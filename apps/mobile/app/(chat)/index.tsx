@@ -1,17 +1,20 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useState } from 'react';
 import {
   View,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  type NativeSyntheticEvent,
-  type NativeScrollEvent,
+  type LayoutChangeEvent,
+  type ScrollViewProps,
 } from 'react-native';
-import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import type { MessageDto } from '@chat-crdt/shared';
+import { FlashList } from '@shopify/flash-list';
+import {
+  KeyboardGestureArea,
+  KeyboardStickyView,
+} from 'react-native-keyboard-controller';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useChatStore } from '../../src/store/chat.store';
 import { useSync } from '../../src/hooks/useSync';
 import { MessageItem } from '../../src/components/MessageItem';
+import { ChatScrollView } from '../../src/components/ChatScrollView';
 import { useAuthStore } from '../../src/store/auth.store';
 import { usePresence } from '../../src/hooks/usePresence';
 import { TypingIndicator } from '../../src/components/TypingIndicator';
@@ -19,26 +22,29 @@ import { ChatHeader } from '../../src/components/ChatHeader';
 import { Composer } from '../../src/components/Composer';
 import { theme } from '../../src/ui';
 
+const LIST_PADDING = 8;
+
 export default function ChatScreen() {
   const messages = useChatStore(s => s.messages);
   const wsStatus = useChatStore(s => s.wsStatus);
   const { sendMessage, sendTyping, getAwareness } = useSync();
   const { typingUsers, onlineCount } = usePresence(getAwareness());
   const logout = useAuthStore(s => s.logout);
-  const listRef = useRef<FlashListRef<MessageDto>>(null);
-  // Only auto-scroll to new messages when the user is already at the bottom,
-  // so reading older history isn't interrupted.
-  const atBottomRef = useRef(true);
+  const { bottom } = useSafeAreaInsets();
 
-  const handleScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-    const distanceFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
-    atBottomRef.current = distanceFromBottom < 80;
+  // The composer overlays the bottom of the list. Reserve its measured height as
+  // bottom padding so the newest message is never clipped behind it (at rest);
+  // the keyboard lift on top of that is handled by KeyboardChatScrollView.
+  const [composerHeight, setComposerHeight] = useState(0);
+
+  const handleComposerLayout = useCallback((e: LayoutChangeEvent) => {
+    setComposerHeight(e.nativeEvent.layout.height);
   }, []);
 
-  const handleContentSizeChange = useCallback(() => {
-    if (atBottomRef.current) listRef.current?.scrollToEnd({ animated: false });
-  }, []);
+  const renderScrollComponent = useCallback(
+    (props: ScrollViewProps) => <ChatScrollView {...props} />,
+    []
+  );
 
   const handleSend = useCallback(
     (content: string) => {
@@ -48,33 +54,39 @@ export default function ChatScreen() {
   );
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
-    >
+    <KeyboardGestureArea interpolator="ios" style={styles.container}>
       <ChatHeader wsStatus={wsStatus} onlineCount={onlineCount} onLogout={logout} />
 
       <View style={styles.list}>
         <FlashList
-          ref={listRef}
           data={messages}
           renderItem={({ item }) => <MessageItem message={item} />}
           keyExtractor={(item) => item.id}
-          onScroll={handleScroll}
-          onContentSizeChange={handleContentSizeChange}
-          contentContainerStyle={styles.listContent}
+          maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
+          renderScrollComponent={renderScrollComponent}
+          contentContainerStyle={{
+            paddingTop: LIST_PADDING,
+            paddingBottom: composerHeight + LIST_PADDING,
+          }}
         />
       </View>
 
-      <TypingIndicator typingUsers={typingUsers} />
-      <Composer onSend={handleSend} sendTyping={sendTyping} />
-    </KeyboardAvoidingView>
+      <KeyboardStickyView style={styles.composer}>
+        <View
+          onLayout={handleComposerLayout}
+          style={[styles.composerInner, { paddingBottom: bottom }]}
+        >
+          <TypingIndicator typingUsers={typingUsers} />
+          <Composer onSend={handleSend} sendTyping={sendTyping} />
+        </View>
+      </KeyboardStickyView>
+    </KeyboardGestureArea>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg },
   list: { flex: 1 },
-  listContent: { paddingVertical: 8 },
+  composer: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  composerInner: { backgroundColor: theme.bg },
 });

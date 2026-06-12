@@ -32,6 +32,8 @@ const MAX_WS_MESSAGE_BYTES = 64 * 1024; // 64 KiB per frame
 const RATE_LIMIT_WINDOW_MS = 1_000;
 const RATE_LIMIT_MAX_MSGS = 60; // per client per window
 
+const HEARTBEAT_INTERVAL_MS = 30_000;
+
 interface RedisPayload {
   origin: string;
   update: string; // base64 incremental update
@@ -55,6 +57,10 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   private readonly clientRate = new WeakMap<WebSocket, RateState>();
   // Awareness clientIDs announced by each socket, so we can clear them on disconnect.
   private readonly awarenessIds = new WeakMap<WebSocket, Set<number>>();
+  // Liveness flag per socket: true on connect + on every pong. A sweep that
+  // finds `false` evicts the socket (it missed the previous ping's pong).
+  private readonly alive = new WeakMap<WebSocket, boolean>();
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -245,6 +251,23 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
     state.count++;
     return state.count > RATE_LIMIT_MAX_MSGS;
+  }
+
+  /**
+   * Ping every client; terminate any that missed the previous cycle's pong.
+   * `terminate()` fires 'close', so handleDisconnect runs the normal cleanup
+   * (awareness removal + room GC) — no special-casing here.
+   */
+  sweepHeartbeats(): void {
+    this.server.clients.forEach((client: WebSocket) => {
+      if (this.alive.get(client) === false) {
+        this.logger.warn('Heartbeat timeout — terminating dead socket');
+        client.terminate();
+        return;
+      }
+      this.alive.set(client, false);
+      client.ping();
+    });
   }
 
   private getOrCreateRoom(roomId: string): Promise<RoomState> {

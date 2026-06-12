@@ -197,4 +197,33 @@ describe('SyncGateway', () => {
       expect(() => gateway.handleDisconnect(client as any)).not.toThrow();
     });
   });
+
+  describe('sweepHeartbeats', () => {
+    function withClients(...clients: FakeSocket[]) {
+      (gateway as any).server = { clients: new Set(clients) };
+    }
+
+    it('terminates a client that missed the previous pong', () => {
+      const dead = new FakeSocket();
+      withClients(dead);
+      (gateway as any).alive.set(dead, false); // missed last cycle
+
+      gateway.sweepHeartbeats();
+
+      expect(dead.terminate).toHaveBeenCalledTimes(1);
+      expect(dead.ping).not.toHaveBeenCalled();
+    });
+
+    it('pings a live client and arms it for the next cycle', () => {
+      const live = new FakeSocket();
+      withClients(live);
+      (gateway as any).alive.set(live, true);
+
+      gateway.sweepHeartbeats();
+
+      expect(live.ping).toHaveBeenCalledTimes(1);
+      expect(live.terminate).not.toHaveBeenCalled();
+      expect((gateway as any).alive.get(live)).toBe(false); // re-armed
+    });
+  });
 });

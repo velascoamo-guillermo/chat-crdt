@@ -116,3 +116,15 @@ cd apps/server && npx jest
 ## ADRs
 
 - [ADR 001: Yjs over Automerge](docs/adr/001-yjs-over-automerge.md)
+- [ADR 002: Messages live in the CRDT only](docs/adr/002-crdt-only-messages.md)
+- [ADR 003: JWT via WebSocket subprotocol](docs/adr/003-ws-subprotocol-auth.md)
+- [ADR 004: Redis true-delta, origin-tagged fan-out](docs/adr/004-redis-delta-fanout.md)
+- [ADR 005: Extractable sync-engine — injected storage, yjs peer dep](docs/adr/005-extractable-sync-engine.md)
+- [ADR 006: Debounced full-snapshot persistence](docs/adr/006-snapshot-persistence.md)
+- [ADR 007: @expo/ui native islands + FlashList split](docs/adr/007-expo-ui-native-islands.md)
+- [ADR 008: Zustand projection + awareness for ephemeral state](docs/adr/008-zustand-and-awareness-state.md)
+
+## Audits
+
+- [2026-06-07 — initial full-stack audit](docs/audit-improvements.md) (all items closed except yjsState pruning)
+- [2026-06-12 — post-remediation audit](docs/audit-2026-06-12.md)

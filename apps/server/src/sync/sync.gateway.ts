@@ -134,7 +134,7 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     // Step 2 — push full current state to the new client (empty SV = full snapshot)
     const enc2 = encoding.createEncoder();
     encoding.writeVarUint(enc2, MSG_SYNC);
-    syncProtocol.writeSyncStep2(enc2, room.doc, new Uint8Array());
+    syncProtocol.writeSyncStep2(enc2, room.doc, new Uint8Array([0]));
     client.send(encoding.toUint8Array(enc2));
 
     // Awareness snapshot — so onlineCount / typing are correct before the next change

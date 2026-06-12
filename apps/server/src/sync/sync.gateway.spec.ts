@@ -84,4 +84,33 @@ describe('SyncGateway', () => {
       expect(client.send).toHaveBeenCalled(); // sync step1/step2 sent
     });
   });
+
+  describe('handleConnection success', () => {
+    it('sends sync step1 + step2 and tracks the client in the room', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+
+      const client = new FakeSocket();
+      await gateway.handleConnection(client as any, fakeReq({ room: 'default', token: 'ok' }));
+
+      // step1 (state vector) + step2 (full snapshot) are two distinct sends
+      expect(client.send.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+      const rooms = (gateway as any).rooms as Map<string, { clients: Set<unknown> }>;
+      expect(rooms.get('default')!.clients.has(client)).toBe(true);
+
+      const clientRoom = (gateway as any).clientRoom as WeakMap<object, string>;
+      expect(clientRoom.get(client)).toBe('default');
+    });
+
+    it('upserts the room row on first load when no persisted state exists', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+
+      const client = new FakeSocket();
+      await gateway.handleConnection(client as any, fakeReq({ room: 'default', token: 'ok' }));
+
+      expect(prisma.room.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { name: 'default' } }),
+      );
+    });
+  });
 });

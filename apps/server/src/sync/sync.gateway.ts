@@ -34,6 +34,7 @@ const RATE_LIMIT_WINDOW_MS = 1_000;
 const RATE_LIMIT_MAX_MSGS = 60; // per client per window
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const YJS_STATE_WARN_BYTES = 1_000_000; // 1 MB — ADR-009 compaction trigger
 
 interface RedisPayload {
   origin: string;
@@ -409,9 +410,20 @@ export class SyncGateway
 
   private async persistRoomState(room: RoomState): Promise<void> {
     const state = Y.encodeStateAsUpdate(room.doc);
+    this.warnIfStateLarge(room.roomId, state.byteLength);
     await this.prisma.room.update({
       where: { name: room.roomId },
       data: { yjsState: Buffer.from(state) },
     });
+  }
+
+  /** Trip the ADR-009 retention trigger: warn once per persist past the cap. */
+  private warnIfStateLarge(roomId: string, bytes: number): void {
+    if (bytes >= YJS_STATE_WARN_BYTES) {
+      this.logger.warn(
+        `Room "${roomId}" yjsState is ${bytes}B (>= ${YJS_STATE_WARN_BYTES}) — ` +
+          `consider ADR-009 epoch compaction`,
+      );
+    }
   }
 }

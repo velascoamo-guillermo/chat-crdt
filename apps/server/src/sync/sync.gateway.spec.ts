@@ -260,4 +260,19 @@ describe('SyncGateway', () => {
       sweep.mockRestore();
     });
   });
+
+  describe('yjsState size monitoring', () => {
+    it('warns when the persisted blob crosses the retention threshold', () => {
+      const warn = jest.spyOn((gateway as any).logger, 'warn');
+      (gateway as any).warnIfStateLarge('default', 2_000_000);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('default'));
+    });
+
+    it('stays silent below the threshold', () => {
+      const warn = jest.spyOn((gateway as any).logger, 'warn');
+      warn.mockClear();
+      (gateway as any).warnIfStateLarge('default', 1_000);
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -12,6 +12,7 @@
     "@chat-crdt/shared": "workspace:*",
     "@chat-crdt/sync-engine": "workspace:*",
     "@expo/metro-runtime": "~56.0.14",
+    "@expo/ui": "~56.0.16",
     "@shopify/flash-list": "2.0.2",
     "expo": "^56.0.0",
     "expo-constants": "~56.0.17",

@@ -120,6 +120,20 @@ describe('SyncGateway', () => {
         expect.objectContaining({ where: { name: 'default' } }),
       );
     });
+
+    it('marks the client alive on connect and resets alive on pong', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+
+      const client = new FakeSocket();
+      await gateway.handleConnection(client as any, fakeReq({ room: 'default', token: 'ok' }));
+
+      expect((gateway as any).alive.get(client)).toBe(true);
+
+      // Simulate a missed cycle, then a pong arriving.
+      (gateway as any).alive.set(client, false);
+      client.emit('pong');
+      expect((gateway as any).alive.get(client)).toBe(true);
+    });
   });
 
   describe('doc update fan-out', () => {

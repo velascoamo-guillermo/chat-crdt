@@ -131,6 +131,10 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     room.clients.add(client);
     this.clientRoom.set(client, roomId);
 
+    // Heartbeat liveness: alive on connect, re-armed on every pong.
+    this.alive.set(client, true);
+    client.on('pong', () => this.alive.set(client, true));
+
     // Step 1 — send server state vector so client can compute the diff it needs to send us
     const enc1 = encoding.createEncoder();
     encoding.writeVarUint(enc1, MSG_SYNC);

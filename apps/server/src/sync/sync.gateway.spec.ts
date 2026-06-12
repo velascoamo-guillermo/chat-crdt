@@ -4,6 +4,8 @@ import { SyncGateway } from './sync.gateway';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoomsService } from '../rooms/rooms.service';
 import { FakeSocket, fakeReq, redisMock } from './__test__/fakes';
+import * as Y from 'yjs';
+import { RoomState } from './room-state';
 
 describe('SyncGateway', () => {
   let gateway: SyncGateway;
@@ -47,6 +49,12 @@ describe('SyncGateway', () => {
     const rooms = (gateway as any).rooms as Map<string, { destroy(): void }>;
     rooms?.forEach(room => room.destroy());
     rooms?.clear();
+
+    // schedulePersist debounces with a 5s setTimeout per room — clear any
+    // pending ones so they don't fire after the test/module is torn down.
+    const persistTimers = (gateway as any).persistTimers as Map<string, ReturnType<typeof setTimeout>>;
+    persistTimers?.forEach(timer => clearTimeout(timer));
+    persistTimers?.clear();
   });
 
   describe('handleConnection auth', () => {
@@ -110,6 +118,35 @@ describe('SyncGateway', () => {
 
       expect(prisma.room.upsert).toHaveBeenCalledWith(
         expect.objectContaining({ where: { name: 'default' } }),
+      );
+    });
+  });
+
+  describe('doc update fan-out', () => {
+    function seedRoom(roomId: string): RoomState {
+      const room = new RoomState(roomId);
+      (gateway as any).rooms.set(roomId, room);
+      (gateway as any).registerRoomUpdateHandler(room);
+      return room;
+    }
+
+    it('fans a delta out to every local client except the origin, and publishes to Redis', () => {
+      const room = seedRoom('default');
+      const origin = new FakeSocket();
+      const other = new FakeSocket();
+      room.clients.add(origin);
+      room.clients.add(other);
+
+      // Mutate the doc with `origin` as the transaction origin.
+      room.doc.transact(() => {
+        room.doc.getArray('messages').push([{ id: 'm1', content: 'hi' }]);
+      }, origin);
+
+      expect(other.send).toHaveBeenCalledTimes(1); // received the delta
+      expect(origin.send).not.toHaveBeenCalled();   // not echoed to sender
+      expect(pub.publish).toHaveBeenCalledWith(
+        'room:update:default',
+        expect.any(String),
       );
     });
   });

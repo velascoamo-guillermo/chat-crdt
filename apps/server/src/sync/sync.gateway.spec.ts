@@ -148,8 +148,8 @@ describe('SyncGateway', () => {
       const room = seedRoom('default');
       const origin = new FakeSocket();
       const other = new FakeSocket();
-      room.clients.add(origin);
-      room.clients.add(other);
+      room.clients.add(origin as any);
+      room.clients.add(other as any);
 
       // Mutate the doc with `origin` as the transaction origin.
       room.doc.transact(() => {
@@ -167,7 +167,7 @@ describe('SyncGateway', () => {
     it('does not re-publish updates that arrived from Redis', () => {
       const room = seedRoom('default');
       const local = new FakeSocket();
-      room.clients.add(local);
+      room.clients.add(local as any);
       pub.publish.mockClear();
 
       // Build a delta from a separate source doc, then apply it as if from Redis.
@@ -192,14 +192,14 @@ describe('SyncGateway', () => {
       (gateway as any).rooms.set('default', room);
 
       const client = new FakeSocket();
-      room.clients.add(client);
+      room.clients.add(client as any);
       (gateway as any).clientRoom.set(client, 'default');
       (gateway as any).awarenessIds.set(client, new Set([42]));
       room.awareness.states.set(42, { user: 'someone' });
 
       gateway.handleDisconnect(client as any);
 
-      expect(room.clients.has(client)).toBe(false);
+      expect(room.clients.has(client as any)).toBe(false);
       expect(room.awareness.getStates().has(42)).toBe(false);
       expect((gateway as any).awarenessIds.has(client)).toBe(false);
 
@@ -238,6 +238,26 @@ describe('SyncGateway', () => {
       expect(live.ping).toHaveBeenCalledTimes(1);
       expect(live.terminate).not.toHaveBeenCalled();
       expect((gateway as any).alive.get(live)).toBe(false); // re-armed
+    });
+  });
+
+  describe('heartbeat lifecycle', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it('runs the sweep on the interval after init and stops after destroy', () => {
+      const sweep = jest.spyOn(gateway, 'sweepHeartbeats').mockImplementation(() => {});
+      const fakeServer = { clients: new Set() };
+
+      gateway.afterInit(fakeServer as any);
+      jest.advanceTimersByTime(30_000);
+      expect(sweep).toHaveBeenCalledTimes(1);
+
+      gateway.onModuleDestroy();
+      jest.advanceTimersByTime(60_000);
+      expect(sweep).toHaveBeenCalledTimes(1); // no further ticks after destroy
+
+      sweep.mockRestore();
     });
   });
 });

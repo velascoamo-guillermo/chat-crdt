@@ -3,8 +3,9 @@ import {
   WebSocketServer,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
 } from '@nestjs/websockets';
-import { Inject, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { Server, WebSocket, RawData } from 'ws';
 import { IncomingMessage } from 'http';
 import * as Y from 'yjs';
@@ -45,7 +46,9 @@ interface RateState {
 }
 
 @WebSocketGateway({ path: '/sync' })
-export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
+export class SyncGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, OnModuleInit, OnModuleDestroy
+{
   @WebSocketServer() server!: Server;
   private readonly logger = new Logger(SyncGateway.name);
   private readonly instanceId = randomUUID();
@@ -95,6 +98,19 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
         );
       }
     });
+  }
+
+  afterInit(server: Server): void {
+    this.server = server;
+    this.heartbeatTimer = setInterval(() => this.sweepHeartbeats(), HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
   }
 
   async handleConnection(client: WebSocket, req: IncomingMessage) {

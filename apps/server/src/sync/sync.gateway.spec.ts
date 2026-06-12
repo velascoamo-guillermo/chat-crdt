@@ -275,4 +275,11 @@ describe('SyncGateway', () => {
       expect(warn).not.toHaveBeenCalled();
     });
   });
+
+  describe('RoomState GC', () => {
+    it('constructs the room doc with garbage collection enabled', () => {
+      const room = new RoomState('default');
+      expect(room.doc.gc).toBe(true);
+    });
+  });
 });

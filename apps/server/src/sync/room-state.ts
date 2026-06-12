@@ -8,7 +8,7 @@ export class RoomState {
   readonly clients: Set<WebSocket> = new Set();
 
   constructor(public readonly roomId: string) {
-    this.doc = new Y.Doc();
+    this.doc = new Y.Doc({ gc: true });
     this.awareness = new awarenessProtocol.Awareness(this.doc);
   }
 

@@ -10,12 +10,19 @@ export function usePresence(awareness: Awareness | null) {
     if (!awareness) return;
 
     const updatePresence = () => {
-      const states = Array.from(awareness.getStates().values()) as Partial<PresenceState>[];
-      setOnlineCount(states.length);
+      const localId = awareness.clientID;
+      const entries = Array.from(awareness.getStates().entries()) as [
+        number,
+        Partial<PresenceState>,
+      ][];
+      // Only real participants announce a username — filters out any relay/phantom state.
+      const participants = entries.filter(([, s]) => typeof s.username === 'string');
+      setOnlineCount(participants.length);
       setTypingUsers(
-        states
-          .filter(s => s.isTyping === true && typeof s.username === 'string')
-          .map(s => s.username as string),
+        participants
+          // Exclude ourselves — never show "you are typing" for the local user.
+          .filter(([id, s]) => id !== localId && s.isTyping === true)
+          .map(([, s]) => s.username as string),
       );
     };
 

@@ -281,5 +281,14 @@ describe('SyncGateway', () => {
       const room = new RoomState('default');
       expect(room.doc.gc).toBe(true);
     });
+
+    it('does not register the server itself as a presence state', () => {
+      // y-protocols Awareness sets a local state ({}) in its constructor. The
+      // server is a relay, not a chat participant — if it kept that state it
+      // would broadcast as a phantom "online" user, inflating onlineCount.
+      const room = new RoomState('default');
+      expect(room.awareness.getStates().size).toBe(0);
+      room.destroy();
+    });
   });
 });

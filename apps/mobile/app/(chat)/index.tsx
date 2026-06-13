@@ -1,35 +1,37 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState } from "react";
 import {
   View,
   StyleSheet,
   type LayoutChangeEvent,
   type ScrollViewProps,
-} from 'react-native';
-import { FlashList } from '@shopify/flash-list';
+} from "react-native";
+import { FlashList } from "@shopify/flash-list";
+import { LinearGradient } from "expo-linear-gradient";
 import {
   KeyboardGestureArea,
   KeyboardStickyView,
-} from 'react-native-keyboard-controller';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useChatStore } from '../../src/store/chat.store';
-import { useSync } from '../../src/hooks/useSync';
-import { MessageItem } from '../../src/components/MessageItem';
-import { ChatScrollView } from '../../src/components/ChatScrollView';
-import { useAuthStore } from '../../src/store/auth.store';
-import { usePresence } from '../../src/hooks/usePresence';
-import { TypingIndicator } from '../../src/components/TypingIndicator';
-import { ChatHeader } from '../../src/components/ChatHeader';
-import { Composer } from '../../src/components/Composer';
-import { theme } from '../../src/ui';
+} from "react-native-keyboard-controller";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Stack } from "expo-router";
+import { useChatStore } from "../../src/store/chat.store";
+import { useSync } from "../../src/hooks/useSync";
+import { MessageItem } from "../../src/components/MessageItem";
+import { ChatScrollView } from "../../src/components/ChatScrollView";
+import { useAuthStore } from "../../src/store/auth.store";
+import { usePresence } from "../../src/hooks/usePresence";
+import { TypingIndicator } from "../../src/components/TypingIndicator";
+import { HeaderLogout, OnlinePill } from "../../src/components/ChatHeader";
+import { Composer } from "../../src/components/Composer";
+import { darkTheme as theme } from "../../src/ui";
 
 const LIST_PADDING = 8;
 
 export default function ChatScreen() {
-  const messages = useChatStore(s => s.messages);
-  const wsStatus = useChatStore(s => s.wsStatus);
+  const messages = useChatStore((s) => s.messages);
+  const wsStatus = useChatStore((s) => s.wsStatus);
   const { sendMessage, sendTyping, getAwareness } = useSync();
   const { typingUsers, onlineCount } = usePresence(getAwareness());
-  const logout = useAuthStore(s => s.logout);
+  const logout = useAuthStore((s) => s.logout);
   const { bottom } = useSafeAreaInsets();
 
   // The composer overlays the bottom of the list. Reserve its measured height as
@@ -43,19 +45,32 @@ export default function ChatScreen() {
 
   const renderScrollComponent = useCallback(
     (props: ScrollViewProps) => <ChatScrollView {...props} />,
-    []
+    [],
   );
 
   const handleSend = useCallback(
     (content: string) => {
       sendMessage(content);
     },
-    [sendMessage]
+    [sendMessage],
   );
 
   return (
     <KeyboardGestureArea interpolator="ios" style={styles.container}>
-      <ChatHeader wsStatus={wsStatus} onlineCount={onlineCount} onLogout={logout} />
+      <Stack.Screen
+        options={{
+          headerShown: true,
+          title: "# general",
+          headerRight: () => <HeaderLogout onPress={logout} />,
+          headerLeft: () => (
+            <OnlinePill wsStatus={wsStatus} onlineCount={onlineCount} />
+          ),
+          headerTintColor: theme.textPrimary,
+          headerTitleStyle: { color: theme.textPrimary },
+          headerShadowVisible: false,
+          headerTransparent: true,
+        }}
+      />
 
       <View style={styles.list}>
         <FlashList
@@ -71,11 +86,17 @@ export default function ChatScreen() {
         />
       </View>
 
+      {/* Soft scroll-edge fade pinned to the bottom safe-area strip: messages
+          stay visible but dissolve into the bg as they slide past the composer
+          into the home-indicator zone. Sits under the floating glass composer. */}
+      <LinearGradient
+        colors={["transparent", theme.bg]}
+        style={[styles.edge, { height: bottom + 24 }]}
+        pointerEvents="none"
+      />
+
       <KeyboardStickyView style={styles.composer}>
-        <View
-          onLayout={handleComposerLayout}
-          style={[styles.composerInner, { paddingBottom: bottom }]}
-        >
+        <View onLayout={handleComposerLayout}>
           <TypingIndicator typingUsers={typingUsers} />
           <Composer onSend={handleSend} sendTyping={sendTyping} />
         </View>
@@ -87,6 +108,18 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg },
   list: { flex: 1 },
-  composer: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  composerInner: { backgroundColor: theme.bg },
+  composer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  // Pinned to the very bottom of the screen, height set inline from the safe
+  // inset. RN stand-in for iOS 26 scrollEdgeEffectStyle(.soft, .bottom).
+  edge: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
 });

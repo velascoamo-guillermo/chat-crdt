@@ -10,5 +10,5 @@ export {
   useNativeState,
   type ObservableState,
 } from '@expo/ui';
-export { theme, statusColor, type Theme } from './theme';
+export { theme, darkTheme, statusColor, type Theme } from './theme';
 export { grow, pillInput, circleButton } from './modifiers';

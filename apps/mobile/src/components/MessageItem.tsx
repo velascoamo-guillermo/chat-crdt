@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import type { MessageDto } from '@chat-crdt/shared';
 import { useAuthStore } from '../store/auth.store';
-import { theme } from '../ui';
+import { darkTheme as theme } from '../ui';
 
 interface Props {
   message: MessageDto;

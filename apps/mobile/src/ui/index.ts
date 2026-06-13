@@ -11,4 +11,4 @@ export {
   type ObservableState,
 } from '@expo/ui';
 export { theme, darkTheme, statusColor, type Theme } from './theme';
-export { grow, pillInput, circleButton } from './modifiers';
+export { grow, pillInput, pillButton, circleButton } from './modifiers';

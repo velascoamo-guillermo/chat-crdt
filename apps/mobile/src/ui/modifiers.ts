@@ -48,6 +48,28 @@ export function pillInput() {
   ];
 }
 
+// Full-width pill CTA on a liquid glass capsule. Pass a tint (e.g. the accent)
+// to color the glass. Android fakes it with a translucent rounded surface.
+export function pillButton(tint = "#FFFFFF") {
+  if (Platform.OS === "android") {
+    return [
+      clip(Shapes.RoundedCorner(28)),
+      background(withAlpha(tint, "2E")),
+      border(1, "#FFFFFF24"),
+      paddingAll(16),
+    ];
+  }
+  return [
+    buttonStyle("plain"),
+    frame({ maxWidth: Infinity }),
+    padding({ horizontal: 24, vertical: 16 }),
+    glassEffect({
+      glass: { variant: "regular", tint, interactive: true },
+      shape: "capsule",
+    }),
+  ];
+}
+
 // Circular liquid glass icon button. Defaults to a neutral white tint; pass a
 // color (e.g. the accent) to tint the glass — used to give the send button affordance.
 // `interactive` glass reacts to press on iOS; Android approximates with a

@@ -2,7 +2,17 @@ import { useCallback, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../src/store/auth.store';
-import { Host, Column, Text, TextInput, Button, useNativeState, theme } from '../../src/ui';
+import {
+  Host,
+  Column,
+  Text,
+  TextInput,
+  Button,
+  useNativeState,
+  darkTheme as theme,
+  pillInput,
+  pillButton,
+} from '../../src/ui';
 
 export default function RegisterScreen() {
   const email = useNativeState('');
@@ -39,8 +49,8 @@ export default function RegisterScreen() {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <Host matchContents={{ vertical: true }} style={styles.host}>
-        <Column spacing={12} style={{ padding: 24 }}>
+      <Host matchContents={{ vertical: true }} colorScheme="dark" style={styles.host}>
+        <Column spacing={14} style={{ padding: 24 }}>
           <Text textStyle={{ fontSize: 28, fontWeight: '700', color: theme.textPrimary, textAlign: 'center' }}>
             Create Account
           </Text>
@@ -51,6 +61,7 @@ export default function RegisterScreen() {
             autoCapitalize="none"
             keyboardType="email-address"
             autoComplete="email"
+            modifiers={pillInput()}
             textStyle={{ fontSize: 16, color: theme.textPrimary }}
           />
           <TextInput
@@ -58,6 +69,7 @@ export default function RegisterScreen() {
             placeholder="Username"
             placeholderTextColor={theme.placeholder}
             autoCapitalize="none"
+            modifiers={pillInput()}
             textStyle={{ fontSize: 16, color: theme.textPrimary }}
           />
           <TextInput
@@ -66,14 +78,14 @@ export default function RegisterScreen() {
             placeholderTextColor={theme.placeholder}
             secureTextEntry
             autoComplete="password"
+            modifiers={pillInput()}
             textStyle={{ fontSize: 16, color: theme.textPrimary }}
           />
-          <Button
-            variant="filled"
-            label={loading ? 'Creating…' : 'Register'}
-            onPress={handleRegister}
-            style={{ backgroundColor: theme.accent, borderRadius: theme.radius.md }}
-          />
+          <Button variant="text" onPress={handleRegister} modifiers={pillButton(theme.accent)}>
+            <Text textStyle={{ fontSize: 16, fontWeight: '600', color: theme.textPrimary }}>
+              {loading ? 'Creating…' : 'Register'}
+            </Text>
+          </Button>
           <Button
             variant="text"
             label="Have an account? Login"

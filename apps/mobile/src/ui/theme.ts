@@ -15,6 +15,25 @@ export const theme = {
   radius: { sm: 4, md: 8, lg: 16, pill: 20 },
 } as const;
 
+// Dark palette for the chat surface (chat screen + composer). Same shape as
+// `theme` so chat components can swap it in via `import { darkTheme as theme }`.
+export const darkTheme = {
+  accent: '#0066ff',
+  bg: '#0a0a0a',
+  surface: '#1c1c1e',
+  textPrimary: '#ffffff',
+  textSecondary: '#8e8e93',
+  placeholder: '#6b6b6e',
+  border: '#2c2c2e',
+  bubbleOther: '#1c1c1e',
+  status: {
+    connected: '#22c55e',
+    connecting: '#f59e0b',
+    offline: '#ef4444',
+  },
+  radius: { sm: 4, md: 8, lg: 16, pill: 20 },
+} as const;
+
 export type Theme = typeof theme;
 
 // Maps any ws status string to a dot color.

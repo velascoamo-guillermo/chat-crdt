@@ -3,7 +3,10 @@
   "private": true,
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "turbo dev",
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml down",
+    "dev": "bun run infra:up && bun --filter @chat-crdt/server dev",
+    "dev:all": "bun run infra:up && turbo dev",
     "build": "turbo build",
     "test": "turbo test",
     "lint": "turbo lint"

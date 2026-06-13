@@ -12,22 +12,26 @@
     "@chat-crdt/shared": "workspace:*",
     "@chat-crdt/sync-engine": "workspace:*",
     "@expo/metro-runtime": "~56.0.14",
+    "@expo/ui": "~56.0.16",
     "@shopify/flash-list": "2.0.2",
     "expo": "^56.0.0",
     "expo-constants": "~56.0.17",
+    "expo-glass-effect": "~56.0.4",
+    "expo-linear-gradient": "~56.0.4",
     "expo-linking": "~56.0.13",
     "expo-router": "~56.2.9",
     "expo-secure-store": "~56.0.4",
     "expo-sqlite": "~56.0.4",
     "expo-status-bar": "~56.0.4",
+    "expo-symbols": "~56.0.6",
     "react": "19.2.3",
     "react-native": "0.85.3",
     "react-native-get-random-values": "^2.0.0",
+    "react-native-keyboard-controller": "^1.21.11",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
     "@babel/core": "^7.25.0",
-    "@types/react": "~19.2.14",
-    "typescript": "~6.0.3"
+    "@types/react": "~19.2.14"
   }
 }

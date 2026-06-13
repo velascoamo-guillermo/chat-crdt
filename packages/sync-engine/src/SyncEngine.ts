@@ -15,7 +15,7 @@ export class SyncEngine {
 
   constructor(config: SyncEngineConfig) {
     this.config = config;
-    this.doc = new Y.Doc();
+    this.doc = new Y.Doc({ gc: true });
     this.messages = this.doc.getArray<MessageDto>('messages');
   }
 

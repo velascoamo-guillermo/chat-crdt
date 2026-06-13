@@ -123,4 +123,10 @@ describe('SyncEngine', () => {
       expect(b.getMessages()[1].content).toBe('second');
     });
   });
+
+  it('doc has garbage collection enabled', () => {
+    const engine = new SyncEngine({ roomId: 'r', userId: 'u', username: 'alice' });
+    expect(engine.doc.gc).toBe(true);
+    engine.destroy();
+  });
 });

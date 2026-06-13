@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Host, Text, theme } from '../ui';
+import { Host, Text, darkTheme as theme } from '../ui';
 
 interface Props {
   typingUsers: string[];
@@ -14,7 +14,7 @@ export const TypingIndicator = memo(function TypingIndicator({ typingUsers }: Pr
       : `${typingUsers.slice(0, 2).join(', ')} are typing…`;
 
   return (
-    <Host matchContents={{ vertical: true }} style={{ backgroundColor: theme.bg }}>
+    <Host matchContents={{ vertical: true }} style={{ backgroundColor: 'transparent' }}>
       <Text
         textStyle={{ fontSize: 12, color: theme.textSecondary }}
         style={{ paddingHorizontal: 16, paddingVertical: 4 }}

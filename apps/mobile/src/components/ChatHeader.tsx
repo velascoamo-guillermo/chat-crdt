@@ -4,16 +4,17 @@ import { SymbolView } from 'expo-symbols';
 import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import { darkTheme as theme, statusColor } from '../ui';
 
-// Logout action for the native header's right slot — SF Symbol on a liquid glass disc.
-export const HeaderLogout = memo(function HeaderLogout({
+// Account action for the native header's right slot — SF Symbol on a liquid
+// glass disc. Opens the account formSheet (email + logout).
+export const HeaderAccount = memo(function HeaderAccount({
   onPress,
 }: {
   onPress: () => void;
 }) {
   const icon = (
     <SymbolView
-      name="rectangle.portrait.and.arrow.right"
-      size={20}
+      name="person.crop.circle.fill"
+      size={22}
       weight="semibold"
       tintColor={theme.accent}
     />

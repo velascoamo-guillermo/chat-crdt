@@ -1,8 +1,94 @@
-import { Platform } from 'react-native';
-import { frame } from '@expo/ui/swift-ui/modifiers';
-import { weight } from '@expo/ui/jetpack-compose/modifiers';
+import { Platform } from "react-native";
+import {
+  frame,
+  padding,
+  buttonStyle,
+  glassEffect,
+} from "@expo/ui/swift-ui/modifiers";
+import {
+  weight,
+  size,
+  clip,
+  background,
+  border,
+  paddingAll,
+  Shapes,
+} from "@expo/ui/jetpack-compose/modifiers";
+
+// 6-digit hex -> 8-digit hex with the given alpha (00–FF). Lets us reuse the
+// iOS tint colors as translucent fills for the Android glass fallback.
+function withAlpha(hex: string, alpha: string) {
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? `${hex}${alpha}` : hex;
+}
 
 // Make a Row/Column child expand to fill available main-axis space.
 export function grow() {
-  return Platform.OS === 'android' ? [weight(1)] : [frame({ maxWidth: Infinity })];
+  return Platform.OS === "android"
+    ? [weight(1)]
+    : [frame({ maxWidth: Infinity })];
+}
+
+// Pill-shaped text field on a liquid glass capsule. Android fakes it with a
+// translucent rounded surface + hairline border.
+export function pillInput() {
+  if (Platform.OS === "android") {
+    return [
+      clip(Shapes.RoundedCorner(24)),
+      background("#FFFFFF1F"),
+      border(1, "#FFFFFF24"),
+      paddingAll(12),
+    ];
+  }
+  return [
+    padding({ horizontal: 16, vertical: 12 }),
+    glassEffect({
+      glass: { variant: "regular", interactive: true },
+      shape: "capsule",
+    }),
+  ];
+}
+
+// Full-width pill CTA on a liquid glass capsule. Pass a tint (e.g. the accent)
+// to color the glass. Android fakes it with a translucent rounded surface.
+export function pillButton(tint = "#FFFFFF") {
+  if (Platform.OS === "android") {
+    return [
+      clip(Shapes.RoundedCorner(28)),
+      background(withAlpha(tint, "2E")),
+      border(1, "#FFFFFF24"),
+      paddingAll(16),
+    ];
+  }
+  return [
+    buttonStyle("plain"),
+    frame({ maxWidth: Infinity }),
+    padding({ horizontal: 24, vertical: 16 }),
+    glassEffect({
+      glass: { variant: "regular", tint, interactive: true },
+      shape: "capsule",
+    }),
+  ];
+}
+
+// Circular liquid glass icon button. Defaults to a neutral white tint; pass a
+// color (e.g. the accent) to tint the glass — used to give the send button affordance.
+// `interactive` glass reacts to press on iOS; Android approximates with a
+// translucent tinted circle + border.
+export function circleButton(size_ = 44, tint = "#FFFFFF") {
+  if (Platform.OS === "android") {
+    return [
+      size(size_, size_),
+      clip(Shapes.Circle),
+      background(withAlpha(tint, "2E")),
+      border(1, "#FFFFFF24"),
+    ];
+  }
+  return [
+    buttonStyle("plain"),
+    frame({ width: size_, height: size_ }),
+    glassEffect({
+      glass: { variant: "regular", tint, interactive: true },
+      shape: "circle",
+    }),
+  ];
 }

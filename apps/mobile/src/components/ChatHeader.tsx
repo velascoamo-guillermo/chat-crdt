@@ -1,30 +1,90 @@
 import { memo } from 'react';
-import { Host, Row, Text, Button, Spacer, theme, statusColor } from '../ui';
+import { Pressable, View, Text, StyleSheet } from 'react-native';
+import { SymbolView } from 'expo-symbols';
+import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
+import { darkTheme as theme, statusColor } from '../ui';
 
-interface Props {
+// Logout action for the native header's right slot — SF Symbol on a liquid glass disc.
+export const HeaderLogout = memo(function HeaderLogout({
+  onPress,
+}: {
+  onPress: () => void;
+}) {
+  const icon = (
+    <SymbolView
+      name="rectangle.portrait.and.arrow.right"
+      size={20}
+      weight="semibold"
+      tintColor={theme.accent}
+    />
+  );
+
+  if (!isLiquidGlassAvailable()) {
+    return (
+      <Pressable onPress={onPress} hitSlop={12} style={[styles.disc, styles.discFallback]}>
+        {icon}
+      </Pressable>
+    );
+  }
+
+  return (
+    <GlassView glassEffectStyle="regular" style={styles.disc} isInteractive>
+      <Pressable onPress={onPress} hitSlop={12} style={styles.discPress}>
+        {icon}
+      </Pressable>
+    </GlassView>
+  );
+});
+
+// Presence indicator for the native header's right slot — a liquid glass pill.
+export const OnlinePill = memo(function OnlinePill({
+  wsStatus,
+  onlineCount,
+}: {
   wsStatus: string;
   onlineCount: number;
-  onLogout: () => void;
-}
-
-export const ChatHeader = memo(function ChatHeader({ wsStatus, onlineCount, onLogout }: Props) {
-  return (
-    <Host matchContents={{ vertical: true }} style={{ backgroundColor: theme.bg }}>
-      <Row
-        alignment="center"
-        spacing={8}
-        style={{ paddingTop: 56, paddingBottom: 16, paddingHorizontal: 16 }}
-      >
-        <Text textStyle={{ fontSize: 18, fontWeight: '700', color: theme.textPrimary }}>
-          # general
-        </Text>
-        <Spacer />
-        <Text textStyle={{ fontSize: 14, color: statusColor(wsStatus) }}>●</Text>
-        <Text textStyle={{ fontSize: 12, color: theme.textSecondary }}>
-          {`${onlineCount} online`}
-        </Text>
-        <Button variant="text" label="Logout" onPress={onLogout} />
-      </Row>
-    </Host>
+}) {
+  const content = (
+    <>
+      <View style={[styles.dot, { backgroundColor: statusColor(wsStatus) }]} />
+      <Text style={styles.label}>{`${onlineCount} online`}</Text>
+    </>
   );
+
+  if (!isLiquidGlassAvailable()) {
+    return <View style={[styles.pill, styles.pillFallback]}>{content}</View>;
+  }
+
+  return (
+    <GlassView glassEffectStyle="regular" style={styles.pill}>
+      {content}
+    </GlassView>
+  );
+});
+
+const styles = StyleSheet.create({
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    height: 28,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  pillFallback: { backgroundColor: theme.surface },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  label: { fontSize: 13, fontWeight: '500', color: theme.textPrimary },
+  disc: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  discPress: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  discFallback: {
+    backgroundColor: theme.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

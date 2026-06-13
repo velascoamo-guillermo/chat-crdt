@@ -3,8 +3,9 @@ import {
   WebSocketServer,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
 } from '@nestjs/websockets';
-import { Inject, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { Server, WebSocket, RawData } from 'ws';
 import { IncomingMessage } from 'http';
 import * as Y from 'yjs';
@@ -32,6 +33,9 @@ const MAX_WS_MESSAGE_BYTES = 64 * 1024; // 64 KiB per frame
 const RATE_LIMIT_WINDOW_MS = 1_000;
 const RATE_LIMIT_MAX_MSGS = 60; // per client per window
 
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const YJS_STATE_WARN_BYTES = 1_000_000; // 1 MB — ADR-009 compaction trigger
+
 interface RedisPayload {
   origin: string;
   update: string; // base64 incremental update
@@ -43,7 +47,9 @@ interface RateState {
 }
 
 @WebSocketGateway({ path: '/sync' })
-export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit {
+export class SyncGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, OnModuleInit, OnModuleDestroy
+{
   @WebSocketServer() server!: Server;
   private readonly logger = new Logger(SyncGateway.name);
   private readonly instanceId = randomUUID();
@@ -55,6 +61,10 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
   private readonly clientRate = new WeakMap<WebSocket, RateState>();
   // Awareness clientIDs announced by each socket, so we can clear them on disconnect.
   private readonly awarenessIds = new WeakMap<WebSocket, Set<number>>();
+  // Liveness flag per socket: true on connect + on every pong. A sweep that
+  // finds `false` evicts the socket (it missed the previous ping's pong).
+  private readonly alive = new WeakMap<WebSocket, boolean>();
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -91,6 +101,19 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     });
   }
 
+  afterInit(server: Server): void {
+    this.server = server;
+    this.heartbeatTimer = setInterval(() => this.sweepHeartbeats(), HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref();
+  }
+
+  onModuleDestroy(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
   async handleConnection(client: WebSocket, req: IncomingMessage) {
     const url = new URL(req.url!, 'http://localhost');
     const roomId = url.searchParams.get('room') ?? 'default';
@@ -125,6 +148,10 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     room.clients.add(client);
     this.clientRoom.set(client, roomId);
 
+    // Heartbeat liveness: alive on connect, re-armed on every pong.
+    this.alive.set(client, true);
+    client.on('pong', () => this.alive.set(client, true));
+
     // Step 1 — send server state vector so client can compute the diff it needs to send us
     const enc1 = encoding.createEncoder();
     encoding.writeVarUint(enc1, MSG_SYNC);
@@ -134,7 +161,7 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     // Step 2 — push full current state to the new client (empty SV = full snapshot)
     const enc2 = encoding.createEncoder();
     encoding.writeVarUint(enc2, MSG_SYNC);
-    syncProtocol.writeSyncStep2(enc2, room.doc, new Uint8Array());
+    syncProtocol.writeSyncStep2(enc2, room.doc, new Uint8Array([0]));
     client.send(encoding.toUint8Array(enc2));
 
     // Awareness snapshot — so onlineCount / typing are correct before the next change
@@ -245,6 +272,23 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
     }
     state.count++;
     return state.count > RATE_LIMIT_MAX_MSGS;
+  }
+
+  /**
+   * Ping every client; terminate any that missed the previous cycle's pong.
+   * `terminate()` fires 'close', so handleDisconnect runs the normal cleanup
+   * (awareness removal + room GC) — no special-casing here.
+   */
+  sweepHeartbeats(): void {
+    this.server.clients.forEach((client: WebSocket) => {
+      if (this.alive.get(client) === false) {
+        this.logger.warn('Heartbeat timeout — terminating dead socket');
+        client.terminate();
+        return;
+      }
+      this.alive.set(client, false);
+      client.ping();
+    });
   }
 
   private getOrCreateRoom(roomId: string): Promise<RoomState> {
@@ -366,9 +410,20 @@ export class SyncGateway implements OnGatewayConnection, OnGatewayDisconnect, On
 
   private async persistRoomState(room: RoomState): Promise<void> {
     const state = Y.encodeStateAsUpdate(room.doc);
+    this.warnIfStateLarge(room.roomId, state.byteLength);
     await this.prisma.room.update({
       where: { name: room.roomId },
       data: { yjsState: Buffer.from(state) },
     });
+  }
+
+  /** Trip the ADR-009 retention trigger: warn once per persist past the cap. */
+  private warnIfStateLarge(roomId: string, bytes: number): void {
+    if (bytes >= YJS_STATE_WARN_BYTES) {
+      this.logger.warn(
+        `Room "${roomId}" yjsState is ${bytes}B (>= ${YJS_STATE_WARN_BYTES}) — ` +
+          `consider ADR-009 epoch compaction`,
+      );
+    }
   }
 }

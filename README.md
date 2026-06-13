@@ -123,6 +123,7 @@ cd apps/server && npx jest
 - [ADR 006: Debounced full-snapshot persistence](docs/adr/006-snapshot-persistence.md)
 - [ADR 007: @expo/ui native islands + FlashList split](docs/adr/007-expo-ui-native-islands.md)
 - [ADR 008: Zustand projection + awareness for ephemeral state](docs/adr/008-zustand-and-awareness-state.md)
+- [ADR 009: yjsState retention — monitor + GC now, epoch compaction on trigger](docs/adr/009-yjsstate-retention.md)
 
 ## Audits
 

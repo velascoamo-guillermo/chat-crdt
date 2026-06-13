@@ -6,7 +6,9 @@
     "dev": "expo start",
     "ios": "expo run:ios",
     "android": "expo run:android",
-    "build": "expo export"
+    "build": "expo export",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@chat-crdt/shared": "workspace:*",

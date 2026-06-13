@@ -5,7 +5,10 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main",
-    "test": "jest"
+    "test": "jest",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "prisma generate"
   },
   "dependencies": {
     "@chat-crdt/shared": "workspace:*",

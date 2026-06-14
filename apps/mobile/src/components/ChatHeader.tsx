@@ -14,9 +14,9 @@ export const HeaderAccount = memo(function HeaderAccount({
   const icon = (
     <SymbolView
       name="person.crop.circle.fill"
-      size={22}
+      size={28}
       weight="semibold"
-      tintColor={theme.accent}
+      tintColor={theme.textPrimary}
     />
   );
 
@@ -77,9 +77,9 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4 },
   label: { fontSize: 13, fontWeight: '500', color: theme.textPrimary },
   disc: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     overflow: 'hidden',
   },
   discPress: { flex: 1, alignItems: 'center', justifyContent: 'center' },

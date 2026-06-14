@@ -12,15 +12,14 @@ import {
   KeyboardStickyView,
 } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import { useChatStore } from "../../src/store/chat.store";
 import { useSync } from "../../src/hooks/useSync";
 import { MessageItem } from "../../src/components/MessageItem";
 import { ChatScrollView } from "../../src/components/ChatScrollView";
-import { useAuthStore } from "../../src/store/auth.store";
 import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
-import { HeaderLogout, OnlinePill } from "../../src/components/ChatHeader";
+import { HeaderAccount, OnlinePill } from "../../src/components/ChatHeader";
 import { Composer } from "../../src/components/Composer";
 import { darkTheme as theme } from "../../src/ui";
 
@@ -31,7 +30,7 @@ export default function ChatScreen() {
   const wsStatus = useChatStore((s) => s.wsStatus);
   const { sendMessage, sendTyping, getAwareness } = useSync();
   const { typingUsers, onlineCount } = usePresence(getAwareness());
-  const logout = useAuthStore((s) => s.logout);
+  const router = useRouter();
   const { bottom } = useSafeAreaInsets();
 
   // The composer overlays the bottom of the list. Reserve its measured height as
@@ -61,7 +60,9 @@ export default function ChatScreen() {
         options={{
           headerShown: true,
           title: "# general",
-          headerRight: () => <HeaderLogout onPress={logout} />,
+          headerRight: () => (
+            <HeaderAccount onPress={() => router.push("/(chat)/account")} />
+          ),
           headerLeft: () => (
             <OnlinePill wsStatus={wsStatus} onlineCount={onlineCount} />
           ),

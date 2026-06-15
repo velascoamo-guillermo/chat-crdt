@@ -4,13 +4,12 @@ import {
   Row,
   Button,
   Icon,
-  TextInput,
+  AppTextInput,
   useNativeState,
-  darkTheme as theme,
-  grow,
-  pillInput,
   circleButton,
+  useUITheme,
 } from "../ui";
+import { isLiquidGlassAvailable } from "expo-glass-effect";
 
 interface Props {
   onSend: (content: string) => void;
@@ -26,6 +25,7 @@ export const Composer = memo(function Composer({ onSend, sendTyping }: Props) {
   const draft = useNativeState("");
   const lastTypingAt = useRef(0);
   const lastActive = useRef(false);
+  const t = useUITheme();
 
   const handleChange = useCallback(
     (text: string) => {
@@ -56,30 +56,28 @@ export const Composer = memo(function Composer({ onSend, sendTyping }: Props) {
   return (
     <Host
       matchContents={{ vertical: true }}
-      colorScheme="dark"
-      style={{ backgroundColor: "transparent" }}
+      style={{
+        backgroundColor: !isLiquidGlassAvailable() ? t.surface : "transparent",
+      }}
     >
-      <Row spacing={8} alignment="center" style={{ padding: 12 }}>
-        {/* Liquid glass capsule — native glass renders its own floating shadow. */}
-        <TextInput
+      <Row spacing={12} alignment="center" style={{ padding: 12 }}>
+        <AppTextInput
           value={draft}
           onChangeText={handleChange}
           onSubmitEditing={handleSend}
           placeholder="Message…"
-          placeholderTextColor={theme.placeholder}
           returnKeyType="send"
           multiline
-          modifiers={[...grow(), ...pillInput()]}
-          textStyle={{ fontSize: 16, color: theme.textPrimary }}
+          grow
         />
 
         {/* Accent-tinted glass circle for send affordance. */}
         <Button
           variant="text"
           onPress={handleSend}
-          modifiers={circleButton(CIRCLE, theme.accent)}
+          modifiers={circleButton(CIRCLE, t.accent)}
         >
-          <Icon name="arrow.up" size={20} color={theme.textPrimary} />
+          <Icon name="arrow.up" size={20} />
         </Button>
       </Row>
     </Host>

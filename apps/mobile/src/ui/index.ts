@@ -10,5 +10,15 @@ export {
   useNativeState,
   type ObservableState,
 } from '@expo/ui';
+export { AppTextInput } from './AppTextInput';
+export type { AppTextInputProps } from './AppTextInput.types';
 export { theme, darkTheme, statusColor, type Theme } from './theme';
-export { grow, pillInput, pillButton, circleButton } from './modifiers';
+export { useUITheme } from './useUITheme';
+export {
+  grow,
+  pillInput,
+  pillButton,
+  circleButton,
+  glassPill,
+  glassDisc,
+} from './modifiers';

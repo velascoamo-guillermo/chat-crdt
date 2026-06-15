@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import {
   View,
   StyleSheet,
+  Platform,
   type LayoutChangeEvent,
   type ScrollViewProps,
 } from "react-native";
@@ -24,6 +25,9 @@ import { Composer } from "../../src/components/Composer";
 import { darkTheme as theme } from "../../src/ui";
 
 const LIST_PADDING = 8;
+// Native stack header content height (excludes the status-bar/safe area, which
+// we add separately from the top inset). iOS 44, Android 56.
+const HEADER_BASE = Platform.OS === "ios" ? 44 : 56;
 
 export default function ChatScreen() {
   const messages = useChatStore((s) => s.messages);
@@ -31,7 +35,11 @@ export default function ChatScreen() {
   const { sendMessage, sendTyping, getAwareness } = useSync();
   const { typingUsers, onlineCount } = usePresence(getAwareness());
   const router = useRouter();
-  const { bottom } = useSafeAreaInsets();
+  const { top, bottom } = useSafeAreaInsets();
+  // Header is transparent (headerTransparent), so the list renders behind it.
+  // Inset the top by the safe area + header height so the oldest messages
+  // aren't clipped under the header/status bar on either platform.
+  const headerHeight = top + HEADER_BASE;
 
   // The composer overlays the bottom of the list. Reserve its measured height as
   // bottom padding so the newest message is never clipped behind it (at rest);
@@ -81,7 +89,7 @@ export default function ChatScreen() {
           maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
           renderScrollComponent={renderScrollComponent}
           contentContainerStyle={{
-            paddingTop: LIST_PADDING,
+            paddingTop: headerHeight + LIST_PADDING,
             paddingBottom: composerHeight + LIST_PADDING,
           }}
         />

@@ -13,6 +13,7 @@ import {
   border,
   paddingAll,
   Shapes,
+  fillMaxWidth,
 } from "@expo/ui/jetpack-compose/modifiers";
 
 // 6-digit hex -> 8-digit hex with the given alpha (00–FF). Lets us reuse the
@@ -36,7 +37,7 @@ export function pillInput() {
       clip(Shapes.RoundedCorner(24)),
       background("#FFFFFF1F"),
       border(1, "#FFFFFF24"),
-      paddingAll(12),
+      // paddingAll(12),
     ];
   }
   return [
@@ -55,8 +56,7 @@ export function pillButton(tint = "#FFFFFF") {
     return [
       clip(Shapes.RoundedCorner(28)),
       background(withAlpha(tint, "2E")),
-      border(1, "#FFFFFF24"),
-      paddingAll(16),
+      fillMaxWidth(),
     ];
   }
   return [
@@ -66,6 +66,33 @@ export function pillButton(tint = "#FFFFFF") {
     glassEffect({
       glass: { variant: "regular", tint, interactive: true },
       shape: "capsule",
+    }),
+  ];
+}
+
+// Small liquid glass capsule for header chips (e.g. the presence pill).
+// Android fakes it with a translucent rounded surface + hairline border.
+export function glassPill() {
+  if (Platform.OS === "android") {
+    return [clip(Shapes.RoundedCorner(14)), paddingAll(8)];
+  }
+  return [
+    padding({ horizontal: 12, vertical: 6 }),
+    glassEffect({ glass: { variant: "regular" }, shape: "capsule" }),
+  ];
+}
+
+// Circular liquid glass disc for header icon buttons (e.g. the account button).
+// Android fakes it with a translucent tinted circle + border.
+export function glassDisc(size_ = 38) {
+  if (Platform.OS === "android") {
+    return [size(size_, size_), clip(Shapes.Circle)];
+  }
+  return [
+    frame({ width: size_, height: size_ }),
+    glassEffect({
+      glass: { variant: "regular", interactive: true },
+      shape: "circle",
     }),
   ];
 }
@@ -80,7 +107,6 @@ export function circleButton(size_ = 44, tint = "#FFFFFF") {
       size(size_, size_),
       clip(Shapes.Circle),
       background(withAlpha(tint, "2E")),
-      border(1, "#FFFFFF24"),
     ];
   }
   return [

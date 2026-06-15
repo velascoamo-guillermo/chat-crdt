@@ -13,6 +13,7 @@
   "dependencies": {
     "@chat-crdt/shared": "workspace:*",
     "@chat-crdt/sync-engine": "workspace:*",
+    "@expo/material-symbols": "^0.1.1",
     "@expo/metro-runtime": "~56.0.14",
     "@expo/ui": "~56.0.16",
     "@shopify/flash-list": "2.0.2",
@@ -26,6 +27,7 @@
     "expo-sqlite": "~56.0.4",
     "expo-status-bar": "~56.0.4",
     "expo-symbols": "~56.0.6",
+    "expo-system-ui": "~56.0.5",
     "react": "19.2.3",
     "react-native": "0.85.3",
     "react-native-get-random-values": "^2.0.0",

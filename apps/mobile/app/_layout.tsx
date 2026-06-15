@@ -1,9 +1,9 @@
-import { useEffect } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { KeyboardProvider } from 'react-native-keyboard-controller';
-import { useAuthStore } from '../src/store/auth.store';
+import { useEffect } from "react";
+import { Stack, useRouter, useSegments } from "expo-router";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { KeyboardProvider } from "react-native-keyboard-controller";
+import { useAuthStore } from "../src/store/auth.store";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { token, isLoading, loadFromStorage } = useAuthStore();
@@ -16,11 +16,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isLoading) return;
-    const inAuth = segments[0] === '(auth)';
+    const inAuth = segments[0] === "(auth)";
     if (!token && !inAuth) {
-      router.replace('/(auth)/login');
+      router.replace("/(auth)/login");
     } else if (token && inAuth) {
-      router.replace('/(chat)');
+      router.replace("/(chat)");
     }
   }, [token, isLoading, segments]);
 
@@ -33,7 +33,12 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <KeyboardProvider>
           <AuthGate>
-            <Stack screenOptions={{ headerShown: false }} />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: undefined },
+              }}
+            />
           </AuthGate>
         </KeyboardProvider>
       </SafeAreaProvider>

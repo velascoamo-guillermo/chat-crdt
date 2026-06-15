@@ -34,7 +34,18 @@ export const darkTheme = {
   radius: { sm: 4, md: 8, lg: 16, pill: 20 },
 } as const;
 
-export type Theme = typeof theme;
+export type Theme = {
+  accent: string;
+  bg: string;
+  surface: string;
+  textPrimary: string;
+  textSecondary: string;
+  placeholder: string;
+  border: string;
+  bubbleOther: string;
+  status: { connected: string; connecting: string; offline: string };
+  radius: { sm: number; md: number; lg: number; pill: number };
+};
 
 // Maps any ws status string to a dot color.
 export function statusColor(status: string): string {

@@ -4,7 +4,14 @@ import { darkTheme as theme } from "../../src/ui";
 export default function ChatLayout() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="index" />
+      <Stack.Screen
+        name="index"
+        options={{
+          contentStyle: { backgroundColor: undefined },
+          headerStyle: { backgroundColor: "transparent" },
+          headerTitleAlign: "center",
+        }}
+      />
       <Stack.Screen
         name="account"
         options={{

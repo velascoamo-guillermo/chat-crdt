@@ -1,43 +1,39 @@
-import { memo } from 'react';
-import { Pressable, View, Text, StyleSheet } from 'react-native';
-import { SymbolView } from 'expo-symbols';
-import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
-import { darkTheme as theme, statusColor } from '../ui';
+import { memo } from "react";
+import {
+  Host,
+  Row,
+  Button,
+  Text,
+  Icon,
+  darkTheme,
+  theme,
+  statusColor,
+  glassPill,
+  glassDisc,
+  useUITheme,
+} from "../ui";
+
+const DISC = 38;
 
 // Account action for the native header's right slot — SF Symbol on a liquid
-// glass disc. Opens the account formSheet (email + logout).
+// glass disc. Opens the account formSheet (email + logout). The glass comes
+// from the `glassEffect` modifier (iOS); Android uses a translucent fallback.
 export const HeaderAccount = memo(function HeaderAccount({
   onPress,
 }: {
   onPress: () => void;
 }) {
-  const icon = (
-    <SymbolView
-      name="person.crop.circle.fill"
-      size={28}
-      weight="semibold"
-      tintColor={theme.textPrimary}
-    />
-  );
-
-  if (!isLiquidGlassAvailable()) {
-    return (
-      <Pressable onPress={onPress} hitSlop={12} style={[styles.disc, styles.discFallback]}>
-        {icon}
-      </Pressable>
-    );
-  }
-
   return (
-    <GlassView glassEffectStyle="regular" style={styles.disc} isInteractive>
-      <Pressable onPress={onPress} hitSlop={12} style={styles.discPress}>
-        {icon}
-      </Pressable>
-    </GlassView>
+    <Host matchContents={{ horizontal: true, vertical: true }}>
+      <Button variant="text" onPress={onPress} modifiers={glassDisc(DISC)}>
+        <Icon name="person.crop.circle.fill" size={28} color={theme.accent} />
+      </Button>
+    </Host>
   );
 });
 
-// Presence indicator for the native header's right slot — a liquid glass pill.
+// Presence indicator for the native header's right slot — a liquid glass pill
+// holding a status dot and the online count.
 export const OnlinePill = memo(function OnlinePill({
   wsStatus,
   onlineCount,
@@ -45,47 +41,28 @@ export const OnlinePill = memo(function OnlinePill({
   wsStatus: string;
   onlineCount: number;
 }) {
-  const content = (
-    <>
-      <View style={[styles.dot, { backgroundColor: statusColor(wsStatus) }]} />
-      <Text style={styles.label}>{`${onlineCount} online`}</Text>
-    </>
-  );
-
-  if (!isLiquidGlassAvailable()) {
-    return <View style={[styles.pill, styles.pillFallback]}>{content}</View>;
-  }
-
+  const t = useUITheme();
   return (
-    <GlassView glassEffectStyle="regular" style={styles.pill}>
-      {content}
-    </GlassView>
+    <Host matchContents={{ horizontal: true, vertical: true }}>
+      <Row
+        spacing={6}
+        alignment="center"
+        style={{ backgroundColor: t.surface }}
+        modifiers={glassPill()}
+      >
+        <Text textStyle={{ fontSize: 14, color: statusColor(wsStatus) }}>
+          ●
+        </Text>
+        <Text
+          textStyle={{
+            fontSize: 13,
+            fontWeight: "500",
+            // color: theme.textPrimary,
+          }}
+        >
+          {`${onlineCount} online`}
+        </Text>
+      </Row>
+    </Host>
   );
-});
-
-const styles = StyleSheet.create({
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    height: 28,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    overflow: 'hidden',
-  },
-  pillFallback: { backgroundColor: theme.surface },
-  dot: { width: 8, height: 8, borderRadius: 4 },
-  label: { fontSize: 13, fontWeight: '500', color: theme.textPrimary },
-  disc: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    overflow: 'hidden',
-  },
-  discPress: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  discFallback: {
-    backgroundColor: theme.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
 });

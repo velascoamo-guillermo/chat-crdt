@@ -17,3 +17,12 @@ coverage/
 
 # Internal AI planning docs
 docs/superpowers/
+
+# Local dev tooling (personal, machine-specific)
+.mcp.json
+.vscode/mcp.json
+.claude/settings.json
+
+# Internal audit notes — kept local, not for the public repo
+docs/audit-improvements.md
+docs/audit-2026-06-12.md

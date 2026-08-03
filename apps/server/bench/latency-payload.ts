@@ -36,8 +36,17 @@ export function decodeTimestampedPayload(raw: string): TimestampedPayload {
   return parsed;
 }
 
-/** One-way latency in ms: the receiver's clock minus the sender's embedded `sentAt`. */
+/**
+ * One-way latency in ms: the receiver's clock minus the sender's embedded
+ * `sentAt`. The single place this subtraction happens — callers (run.ts,
+ * WsBenchClient consumers) should use this instead of re-deriving it inline.
+ */
+export function latencyMs(sentAt: number, receivedAt: number): number {
+  return receivedAt - sentAt;
+}
+
+/** One-way latency in ms, decoding `sentAt` from a raw JSON payload string. */
 export function latencyFromPayload(raw: string, receivedAt: number): number {
   const { sentAt } = decodeTimestampedPayload(raw);
-  return receivedAt - sentAt;
+  return latencyMs(sentAt, receivedAt);
 }

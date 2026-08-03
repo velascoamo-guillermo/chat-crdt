@@ -1,5 +1,10 @@
 import { describe, test, expect } from 'bun:test';
-import { encodeTimestampedPayload, decodeTimestampedPayload, latencyFromPayload } from './latency-payload';
+import {
+  encodeTimestampedPayload,
+  decodeTimestampedPayload,
+  latencyFromPayload,
+  latencyMs,
+} from './latency-payload';
 
 describe('encodeTimestampedPayload / decodeTimestampedPayload', () => {
   test('round-trips seq and sentAt through JSON', () => {
@@ -32,5 +37,21 @@ describe('latencyFromPayload', () => {
 
   test('propagates the decode error for a malformed payload', () => {
     expect(() => latencyFromPayload('garbage', 1042)).toThrow(/invalid timestamped payload/i);
+  });
+
+  test('delegates to latencyMs (same result for the same inputs)', () => {
+    const raw = encodeTimestampedPayload(9, 500.25);
+    expect(latencyFromPayload(raw, 510.75)).toBe(latencyMs(500.25, 510.75));
+  });
+});
+
+describe('latencyMs', () => {
+  test('is receivedAt - sentAt, supporting sub-millisecond (performance.now()-style) values', () => {
+    expect(latencyMs(1000, 1042)).toBe(42);
+    expect(latencyMs(1000.25, 1002.75)).toBeCloseTo(2.5, 6);
+  });
+
+  test('can be negative (receiver clock behind sender, or clock skew)', () => {
+    expect(latencyMs(1000, 990)).toBe(-10);
   });
 });

@@ -17,6 +17,12 @@ import * as syncProtocol from 'y-protocols/sync';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
 import { encodeTimestampedPayload, decodeTimestampedPayload } from './latency-payload';
+// NOTE: sentAt/receivedAt are `performance.now()` values, not Date.now() —
+// see the `publish`/`observeLatencies` comments below. Safe because
+// publisher and every subscriber are WsBenchClient instances constructed in
+// this SAME process (run.ts); performance.now() is monotonic and
+// sub-millisecond, unlike Date.now()'s integer-ms quantization, which was
+// on the same order as the latencies being measured (0-7ms).
 import { RawWsSocket } from './raw-ws-socket';
 
 const MSG_SYNC = 0;
@@ -48,7 +54,6 @@ export class WsBenchClient {
   readonly doc: Y.Doc;
   private readonly messages: Y.Array<string>;
   private socket: RawWsSocket | null = null;
-  private lastObservedLength = 0;
   private readyResolved = false;
   private resolveReady!: () => void;
   private rejectReady!: (err: Error) => void;
@@ -59,7 +64,6 @@ export class WsBenchClient {
   constructor(private readonly config: WsBenchClientConfig) {
     this.doc = new Y.Doc();
     this.messages = this.doc.getArray<string>('messages');
-    this.lastObservedLength = this.messages.length;
     this.ready = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
@@ -167,15 +171,23 @@ export class WsBenchClient {
   /** Publisher role: append a timestamped entry to the shared messages array. */
   publish(seq: number): void {
     if (this.closed) throw new Error(`publish(${seq}) called on a closed WS bench client`);
-    this.messages.push([encodeTimestampedPayload(seq, Date.now())]);
+    this.messages.push([encodeTimestampedPayload(seq, performance.now())]);
   }
 
-  /** Subscriber role: fire `onSample` once per newly-observed remote entry. */
+  /**
+   * Subscriber role: fire `onSample` once per newly-observed remote entry.
+   * The baseline (how many entries already exist) is captured HERE, at
+   * attach time — i.e. after the initial sync handshake has populated the
+   * doc — not at construction time (before sync). Reusing a room with
+   * pre-existing messages would otherwise replay every old entry as if it
+   * were a fresh sample the first time this fires.
+   */
   observeLatencies(onSample: (sample: LatencySample) => void): () => void {
+    let baseline = this.messages.length;
     const handler = () => {
-      const receivedAt = Date.now();
+      const receivedAt = performance.now();
       const arr = this.messages.toArray();
-      for (let i = this.lastObservedLength; i < arr.length; i++) {
+      for (let i = baseline; i < arr.length; i++) {
         try {
           const { seq, sentAt } = decodeTimestampedPayload(arr[i]);
           onSample({ seq, sentAt, receivedAt });
@@ -183,7 +195,7 @@ export class WsBenchClient {
           // Skip malformed/foreign entries rather than crash the whole run.
         }
       }
-      this.lastObservedLength = arr.length;
+      baseline = arr.length;
     };
     this.messages.observe(handler);
     return () => this.messages.unobserve(handler);

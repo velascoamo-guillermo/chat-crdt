@@ -59,7 +59,8 @@ import { ensureServerBuilt, startServerProcess, type ManagedServerProcess } from
 import { registerUser, createRoom, joinRoom, type AuthedUser } from './rest-client';
 import { WsBenchClient } from './ws-bench-client';
 import { runLoad, type LoadConfig } from './scenarios';
-import { summarizeLatenciesMs } from './percentiles';
+import { summarizeLatenciesMs, type LatencySummary } from './percentiles';
+import { latencyMs } from './latency-payload';
 import { formatMarkdownReport, type ReportRow } from './report';
 
 const SERVER_CWD = join(import.meta.dir, '..');
@@ -201,11 +202,14 @@ async function setupFanOut(
   };
 }
 
+const EMPTY_SUMMARY: LatencySummary = { count: 0, p50: NaN, p95: NaN, p99: NaN, min: NaN, max: NaN, meanMs: NaN };
+
 async function runTopology(
   name: string,
   setup: () => Promise<TopologySetup>,
-): Promise<ReportRow[]> {
+): Promise<{ rows: ReportRow[]; anyFailed: boolean }> {
   const rows: ReportRow[] = [];
+  let anyFailed = false;
   const conditions: Array<[string, LoadConfig]> = [
     ['baseline', BASELINE],
     ['burst', BURST],
@@ -217,21 +221,39 @@ async function runTopology(
       console.log(
         `Running "${name}" / ${condition}: ${load.messageCount} msgs @ ${load.intervalMs}ms interval, ${subscribers.length} subscriber(s)...`,
       );
-      const samples = await runLoad(publisher, subscribers, load);
-      if (samples.length === 0) {
-        throw new Error(`No latency samples collected for "${name}" / ${condition}`);
-      }
-      const summary = summarizeLatenciesMs(samples.map(s => s.receivedAt - s.sentAt));
-      rows.push({ topology: name, condition, summary });
+      const result = await runLoad(publisher, subscribers, load);
+      const failed = result.deliveredSamples < result.expectedSamples || result.rateLimitedClients > 0;
+      if (failed) anyFailed = true;
+
+      const summary =
+        result.deliveredSamples > 0
+          ? summarizeLatenciesMs(result.samples.map(s => latencyMs(s.sentAt, s.receivedAt)))
+          : EMPTY_SUMMARY;
+
+      rows.push({
+        topology: name,
+        condition,
+        summary,
+        deliveredSamples: result.deliveredSamples,
+        expectedSamples: result.expectedSamples,
+        achievedRatePerSec: result.achievedRatePerSec,
+        failed,
+      });
+
+      const status = failed ? 'FAILED' : 'ok';
       console.log(
-        `  -> ${summary.count} samples | P50=${summary.p50.toFixed(1)}ms P95=${summary.p95.toFixed(1)}ms P99=${summary.p99.toFixed(1)}ms (min ${summary.min.toFixed(1)} / max ${summary.max.toFixed(1)})`,
+        `  -> [${status}] ${result.deliveredSamples}/${result.expectedSamples} delivered | ` +
+          `achieved ${result.achievedRatePerSec.toFixed(1)} msg/s | ` +
+          `P50=${summary.p50.toFixed(1)}ms P95=${summary.p95.toFixed(1)}ms P99=${summary.p99.toFixed(1)}ms ` +
+          `(min ${summary.min.toFixed(1)} / max ${summary.max.toFixed(1)})` +
+          (result.rateLimitedClients > 0 ? ` | ${result.rateLimitedClients} client(s) hit the 4029 rate limit` : ''),
       );
     } finally {
       cleanup();
     }
   }
 
-  return rows;
+  return { rows, anyFailed };
 }
 
 async function main(): Promise<void> {
@@ -249,14 +271,17 @@ async function main(): Promise<void> {
   });
 
   const rows: ReportRow[] = [];
+  let anyFailed = false;
 
   try {
     console.log('Registering the two reused bench identities (pub/sub)...');
     const identities = await registerIdentities(serverA.baseUrl);
 
-    rows.push(
-      ...(await runTopology('2 clients — same instance', () => setupSameInstance(serverA, identities))),
+    const sameInstance = await runTopology('2 clients — same instance', () =>
+      setupSameInstance(serverA, identities),
     );
+    rows.push(...sameInstance.rows);
+    anyFailed ||= sameInstance.anyFailed;
 
     console.log(`Starting server instance B on port ${PORT_B} (Redis-hop topology)...`);
     const serverB = await startServerProcess({
@@ -268,29 +293,38 @@ async function main(): Promise<void> {
       cwd: SERVER_CWD,
     });
     try {
-      rows.push(
-        ...(await runTopology('2 clients — 2 instances (Redis hop)', () =>
-          setupRedisHop(serverA, serverB, identities),
-        )),
+      const redisHop = await runTopology('2 clients — 2 instances (Redis hop)', () =>
+        setupRedisHop(serverA, serverB, identities),
       );
+      rows.push(...redisHop.rows);
+      anyFailed ||= redisHop.anyFailed;
     } finally {
       await serverB.stop();
     }
 
-    rows.push(
-      ...(await runTopology('10 clients — fan-out (1 instance)', () =>
-        setupFanOut(serverA, identities),
-      )),
+    const fanOut = await runTopology('10 clients — fan-out (1 instance)', () =>
+      setupFanOut(serverA, identities),
     );
+    rows.push(...fanOut.rows);
+    anyFailed ||= fanOut.anyFailed;
   } finally {
     await serverA.stop();
   }
 
   console.log('\n' + formatMarkdownReport(rows) + '\n');
+
+  if (anyFailed) {
+    console.error('One or more scenarios delivered fewer samples than expected, or hit the 4029 rate limit — see "FAILED" rows above.');
+    process.exitCode = 1;
+  }
 }
 
 main()
-  .then(() => process.exit(0))
+  .then(() => {
+    // Preserve a non-zero exitCode set above (e.g. a short/lossy scenario)
+    // instead of unconditionally forcing 0.
+    process.exit(process.exitCode ?? 0);
+  })
   .catch(err => {
     console.error('Bench run failed:', err);
     process.exit(1);

@@ -27,6 +27,7 @@ export interface ManagedServerProcess {
 
 const DEFAULT_READY_TIMEOUT_MS = 20_000;
 const READY_POLL_INTERVAL_MS = 250;
+const TAIL_MAX_LINES = 200;
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -40,6 +41,34 @@ function waitForExit(proc: ChildProcess): Promise<void> {
     }
     proc.once('exit', () => resolve());
   });
+}
+
+/**
+ * Bounded ring buffer of the last `TAIL_MAX_LINES` lines written to it.
+ * `startServerProcess` uses one per spawned process so its piped
+ * stdout/stderr is always drained (an unread pipe backpressures the child
+ * once its OS buffer fills — ~64KB — which can stall the server mid-burst
+ * and corrupt the very latencies this harness is measuring) while still
+ * keeping enough context to print on a readiness failure or crash.
+ */
+class TailBuffer {
+  private lines: string[] = [];
+  private carry = '';
+
+  write(chunk: Buffer): void {
+    const text = this.carry + chunk.toString('utf8');
+    const parts = text.split('\n');
+    this.carry = parts.pop() ?? '';
+    for (const line of parts) {
+      this.lines.push(line);
+      if (this.lines.length > TAIL_MAX_LINES) this.lines.shift();
+    }
+  }
+
+  toString(): string {
+    const rest = this.carry ? [this.carry] : [];
+    return [...this.lines, ...rest].join('\n') || '(no output captured)';
+  }
 }
 
 /** `bun run build` (nest build via tsc) — needed once so dist/main.js has valid decorator metadata. */
@@ -90,9 +119,26 @@ export async function startServerProcess(
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
+  const tail = new TailBuffer();
+  proc.stdout?.on('data', (chunk: Buffer) => tail.write(chunk));
+  proc.stderr?.on('data', (chunk: Buffer) => tail.write(chunk));
+
+  let stoppedByUs = false;
+  proc.once('exit', (code, signal) => {
+    if (stoppedByUs) return;
+    console.error(
+      `[server-process] "${config.label}" on port ${config.port} exited unexpectedly ` +
+        `(code=${code ?? 'null'}, signal=${signal ?? 'null'}). Last output:\n${tail.toString()}`,
+    );
+  });
+
   try {
     await waitUntilReady(baseUrl, config.label, readyTimeoutMs);
   } catch (err) {
+    console.error(
+      `[server-process] "${config.label}" failed to become ready. Last output:\n${tail.toString()}`,
+    );
+    stoppedByUs = true;
     proc.kill();
     throw err;
   }
@@ -102,6 +148,7 @@ export async function startServerProcess(
     port: config.port,
     baseUrl,
     async stop() {
+      stoppedByUs = true;
       proc.kill();
       await waitForExit(proc);
     },

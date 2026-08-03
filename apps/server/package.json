@@ -8,7 +8,8 @@
     "test": "jest --ci --forceExit",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "db:generate": "prisma generate"
+    "db:generate": "prisma generate",
+    "bench": "bun run bench/run.ts"
   },
   "dependencies": {
     "@chat-crdt/shared": "workspace:*",

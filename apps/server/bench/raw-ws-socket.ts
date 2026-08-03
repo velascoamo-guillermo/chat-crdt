@@ -35,6 +35,16 @@ export class RawWsSocket {
   private recvBuffer: Buffer = Buffer.alloc(0);
   private closed = false;
   private events: RawWsSocketEvents = {};
+  // The 101 response and the server's first frame(s) can arrive in the same
+  // TCP chunk (sync.gateway.ts sends SyncStep1+SyncStep2 unconditionally
+  // right after upgrading). connect() resolves and processes that buffered
+  // chunk synchronously, but the consumer only calls .on() in the .then()
+  // continuation — one tick later. Anything emitted before .on() is called
+  // must be queued, not dropped.
+  private attached = false;
+  private pendingMessages: Uint8Array[] = [];
+  private pendingClose: { code: number; reason: string } | null = null;
+  private pendingError: Error | null = null;
 
   static connect(url: string, protocols: readonly string[], timeoutMs = 10_000): Promise<RawWsSocket> {
     return new Promise((resolve, reject) => {
@@ -98,7 +108,7 @@ export class RawWsSocket {
         client.recvBuffer = rest;
         socket.on('data', chunk2 => client.onData(chunk2));
         socket.on('close', () => client.handleClose(1006, 'TCP connection closed'));
-        socket.on('error', err => client.events.onError?.(err));
+        socket.on('error', err => client.emitError(err));
         resolve(client);
         if (client.recvBuffer.length > 0) client.processBuffer();
       };
@@ -113,8 +123,42 @@ export class RawWsSocket {
     });
   }
 
+  /**
+   * Attaches consumer handlers and flushes anything that arrived (and was
+   * parsed) before this call — see the `attached` field comment above.
+   */
   on(events: RawWsSocketEvents): void {
     this.events = { ...this.events, ...events };
+    this.attached = true;
+
+    const queuedMessages = this.pendingMessages.splice(0);
+    for (const data of queuedMessages) this.events.onMessage?.(data);
+
+    if (this.pendingClose) {
+      const { code, reason } = this.pendingClose;
+      this.pendingClose = null;
+      this.events.onClose?.(code, reason);
+    }
+    if (this.pendingError) {
+      const err = this.pendingError;
+      this.pendingError = null;
+      this.events.onError?.(err);
+    }
+  }
+
+  private emitMessage(data: Uint8Array): void {
+    if (this.attached) this.events.onMessage?.(data);
+    else this.pendingMessages.push(data);
+  }
+
+  private emitClose(code: number, reason: string): void {
+    if (this.attached) this.events.onClose?.(code, reason);
+    else this.pendingClose = { code, reason };
+  }
+
+  private emitError(err: Error): void {
+    if (this.attached) this.events.onError?.(err);
+    else this.pendingError = err;
   }
 
   private onData(chunk: Buffer): void {
@@ -168,7 +212,7 @@ export class RawWsSocket {
     switch (opcode) {
       case OPCODE_BINARY:
       case OPCODE_TEXT:
-        this.events.onMessage?.(new Uint8Array(payload));
+        this.emitMessage(new Uint8Array(payload));
         break;
       case OPCODE_CLOSE: {
         const code = payload.length >= 2 ? payload.readUInt16BE(0) : 1005;
@@ -190,7 +234,7 @@ export class RawWsSocket {
     if (this.closed) return;
     this.closed = true;
     this.socket?.destroy();
-    this.events.onClose?.(code, reason);
+    this.emitClose(code, reason);
   }
 
   /** RFC 6455 requires client->server frames to be masked. */

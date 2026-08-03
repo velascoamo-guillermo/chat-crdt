@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import {
   View,
+  Text,
   StyleSheet,
   Platform,
   type LayoutChangeEvent,
@@ -105,6 +106,14 @@ export default function ChatScreen() {
       <KeyboardStickyView style={[styles.composer]}>
         <View onLayout={handleComposerLayout}>
           <TypingIndicator typingUsers={typingUsers} />
+          {/* QA-only readout of the merged message count. Backs the Maestro E2E
+              convergence assertion (apps/mobile/.maestro) — a hard count is a much
+              stronger "no duplicates" signal than scraping bubble text, since a
+              duplicated CRDT op would inflate this number even when two bubbles
+              happen to render identical text. */}
+          <Text testID="chat-message-count" style={styles.debugCount}>
+            {`${messages.length} msgs`}
+          </Text>
           <Composer onSend={handleSend} sendTyping={sendTyping} />
         </View>
       </KeyboardStickyView>
@@ -115,6 +124,12 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   list: { flex: 1 },
+  debugCount: {
+    alignSelf: "center",
+    fontSize: 9,
+    opacity: 0.35,
+    marginBottom: 2,
+  },
   composer: {
     position: "absolute",
     left: 0,

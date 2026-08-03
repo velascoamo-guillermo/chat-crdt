@@ -1,7 +1,9 @@
 import { Stack } from "expo-router";
-import { darkTheme as theme } from "../../src/ui";
+import { useUITheme } from "../../src/ui";
 
 export default function ChatLayout() {
+  const t = useUITheme();
+
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen
@@ -20,7 +22,7 @@ export default function ChatLayout() {
           sheetAllowedDetents: [0.45],
           sheetCornerRadius: 24,
           sheetGrabberVisible: true,
-          contentStyle: { backgroundColor: theme.surface },
+          contentStyle: { backgroundColor: t.surface },
         }}
       />
     </Stack>

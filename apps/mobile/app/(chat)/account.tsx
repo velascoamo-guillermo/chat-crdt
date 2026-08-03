@@ -33,7 +33,7 @@ export default function AccountScreen() {
     <View
       style={[
         styles.container,
-        { backgroundColor: t.bg, paddingBottom: bottom + 24 },
+        { backgroundColor: t.surface, paddingBottom: bottom + 24 },
       ]}
     >
       <Host
@@ -65,10 +65,10 @@ export default function AccountScreen() {
             <Icon
               name="rectangle.portrait.and.arrow.right"
               size={18}
-              color={t.status.offline}
+              color="#ffffff"
             />
             <Text
-              textStyle={{ fontSize: 17, fontWeight: "600", color: t.status.offline }}
+              textStyle={{ fontSize: 17, fontWeight: "600", color: "#ffffff" }}
             >
               Log out
             </Text>

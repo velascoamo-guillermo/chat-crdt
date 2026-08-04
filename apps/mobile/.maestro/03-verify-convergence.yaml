@@ -1,0 +1,28 @@
+# Maestro E2E — Part 3/3: verify convergence after network is restored.
+#
+# Must run after run.sh has: restarted apps/server ("restore network"), then run the
+# headless client B script (apps/mobile/.maestro/scripts/client-b-offline-inject.ts),
+# which authors 2 offline messages as user B and connects once to sync them up via the
+# same y-protocols state-vector handshake the server uses for every client.
+#
+# Device A's WebSocketProvider reconnects on its own (exponential backoff, already
+# retrying in the background since part 2) — this flow just waits for that and then
+# asserts the fully-converged, deduplicated 5-message history:
+#   1 online (A) + 2 offline (A, proven to survive relaunch in part 2) + 2 offline (B)
+#
+# The `assertVisible: "5 msgs"` check is the "no duplicates" proof: it reads the
+# testID="chat-message-count" readout added to apps/mobile/app/(chat)/index.tsx for
+# this flow (messages.length rendered as text). Individual text assertions below only
+# prove presence — they would still pass if the CRDT merge duplicated an op and
+# rendered the same bubble twice. The exact count is what catches that.
+appId: com.chatcrdt.app
+---
+- extendedWaitUntil:
+    visible: "${RUN_ID}-B-offline-2"
+    timeout: 45000
+- assertVisible: "${RUN_ID}-A-online-1"
+- assertVisible: "${RUN_ID}-A-offline-1"
+- assertVisible: "${RUN_ID}-A-offline-2"
+- assertVisible: "${RUN_ID}-B-offline-1"
+- assertVisible: "${RUN_ID}-B-offline-2"
+- assertVisible: "5 msgs"

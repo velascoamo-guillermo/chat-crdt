@@ -1,0 +1,40 @@
+# Maestro E2E — Part 2/3: send while offline, then kill + relaunch the app to prove
+# SQLite persistence survives process death.
+#
+# Must run AFTER 01-login-and-online-message.yaml (same logged-in session, same app
+# process — we don't clearState here) and while apps/server is STOPPED
+# (`apps/mobile/.maestro/scripts/server-ctl.sh stop`, run by run.sh between part 1 and
+# this file). Sending still works while offline: SyncEngine inserts into the local
+# Y.Array immediately (optimistic), independent of WebSocketProvider's connection
+# status — only the *send to server* half is queued/retried.
+#
+# `stopApp` + `launchApp` (not backgrounding) is deliberate: it kills the whole app
+# process, not just React state, so reappearing offline messages after relaunch can
+# only have come from op-sqlite's `chat.db` (SQLitePersistence in useSync.ts), not from
+# anything still warm in memory.
+#
+# RED-run finding: on a loaded dev machine (several simulators + Metro + docker infra
+# + apps/server all running at once), the app can get evicted to the home screen
+# between the part 1 and part 2 `maestro test` invocations for reasons unrelated to
+# this feature (simulator memory pressure). The `launchApp: clearState: false` guard
+# below is a no-op if the app is already foregrounded (SQLite/Yjs state — and thus the
+# 3 messages already sent — is untouched either way) and recovers it otherwise, so this
+# flow doesn't flake on unrelated host load.
+appId: com.chatcrdt.app
+---
+- launchApp:
+    clearState: false
+- tapOn: "Message…"
+- inputText: "${RUN_ID}-A-offline-1"
+- tapOn: "Up"
+- assertVisible: "${RUN_ID}-A-offline-1"
+- tapOn: "Message…"
+- inputText: "${RUN_ID}-A-offline-2"
+- tapOn: "Up"
+- assertVisible: "${RUN_ID}-A-offline-2"
+- stopApp
+- launchApp:
+    clearState: false
+- assertVisible: "${RUN_ID}-A-online-1"
+- assertVisible: "${RUN_ID}-A-offline-1"
+- assertVisible: "${RUN_ID}-A-offline-2"

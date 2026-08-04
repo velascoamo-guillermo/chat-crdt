@@ -8,7 +8,7 @@
     "android": "expo run:android",
     "build": "expo export",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p .maestro/scripts/tsconfig.json"
   },
   "dependencies": {
     "@chat-crdt/shared": "workspace:*",
@@ -35,6 +35,9 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.0",
-    "@types/react": "~19.2.14"
+    "@types/node": "^22.0.0",
+    "@types/react": "~19.2.14",
+    "@types/ws": "^8.18.0",
+    "ws": "^8.18.0"
   }
 }

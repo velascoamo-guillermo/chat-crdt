@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { View, StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { useAuthStore } from "../../src/store/auth.store";
 import {
   Host,
@@ -22,12 +23,17 @@ export default function AccountScreen() {
   const logout = useAuthStore((s) => s.logout);
   const { bottom } = useSafeAreaInsets();
   const t = useUITheme();
+  const router = useRouter();
 
   // AuthGate (root layout) redirects to /(auth)/login once the token clears,
   // which tears down this sheet — no manual dismiss needed.
   const handleLogout = useCallback(() => {
     logout();
   }, [logout]);
+
+  const handleRooms = useCallback(() => {
+    router.push("/(chat)/rooms");
+  }, [router]);
 
   return (
     <View
@@ -55,25 +61,41 @@ export default function AccountScreen() {
         </Column>
       </Host>
 
-      <Host matchContents={{ vertical: true }}>
-        <Button
-          variant="text"
-          onPress={handleLogout}
-          modifiers={pillButton(t.status.offline)}
-        >
-          <Row spacing={8} alignment="center">
-            <Icon
-              name="rectangle.portrait.and.arrow.right"
-              size={18}
-              color="#ffffff"
-            />
-            <Text
-              textStyle={{ fontSize: 17, fontWeight: "600", color: "#ffffff" }}
-            >
-              Log out
-            </Text>
-          </Row>
-        </Button>
+      <Host matchContents={{ vertical: true }} style={styles.actionsHost}>
+        <Column spacing={12}>
+          <Button
+            variant="text"
+            onPress={handleRooms}
+            modifiers={pillButton(t.surface)}
+          >
+            <Row spacing={8} alignment="center">
+              <Icon name="bubble.left.and.bubble.right" size={18} color={t.textPrimary} />
+              <Text
+                textStyle={{ fontSize: 17, fontWeight: "600", color: t.textPrimary }}
+              >
+                Rooms
+              </Text>
+            </Row>
+          </Button>
+          <Button
+            variant="text"
+            onPress={handleLogout}
+            modifiers={pillButton(t.status.offline)}
+          >
+            <Row spacing={8} alignment="center">
+              <Icon
+                name="rectangle.portrait.and.arrow.right"
+                size={18}
+                color="#ffffff"
+              />
+              <Text
+                textStyle={{ fontSize: 17, fontWeight: "600", color: "#ffffff" }}
+              >
+                Log out
+              </Text>
+            </Row>
+          </Button>
+        </Column>
       </Host>
     </View>
   );
@@ -87,4 +109,5 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   identityHost: { alignSelf: "center" },
+  actionsHost: { alignSelf: "stretch" },
 });

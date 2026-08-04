@@ -6,12 +6,22 @@ export default function ChatLayout() {
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen
-        name="index"
+        name="[roomId]"
         options={{
           contentStyle: { backgroundColor: undefined },
           headerStyle: { backgroundColor: "transparent" },
           headerTitleAlign: "center",
+        }}
+      />
+      <Stack.Screen
+        name="rooms"
+        options={{
+          headerShown: true,
+          title: "Rooms",
+          headerTitleAlign: "center",
+          contentStyle: { backgroundColor: t.bg },
         }}
       />
       <Stack.Screen

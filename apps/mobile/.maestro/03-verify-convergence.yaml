@@ -2,27 +2,47 @@
 #
 # Must run after run.sh has: restarted apps/server ("restore network"), then run the
 # headless client B script (apps/mobile/.maestro/scripts/client-b-offline-inject.ts),
-# which authors 2 offline messages as user B and connects once to sync them up via the
-# same y-protocols state-vector handshake the server uses for every client.
+# which authors 2 offline messages as user B, connects once to sync them up via the
+# same y-protocols state-vector handshake the server uses for every client, and
+# (review-round-1) asserts its own final view is complete before printing an
+# `ORDER_DIGEST=<hex>` line that run.sh captures and passes in here as EXPECTED_ORDER.
 #
 # Device A's WebSocketProvider reconnects on its own (exponential backoff, already
 # retrying in the background since part 2) — this flow just waits for that and then
-# asserts the fully-converged, deduplicated 5-message history:
+# asserts the fully-converged, deduplicated, CORRECTLY-ORDERED 5-message history:
 #   1 online (A) + 2 offline (A, proven to survive relaunch in part 2) + 2 offline (B)
 #
-# The `assertVisible: "5 msgs"` check is the "no duplicates" proof: it reads the
-# testID="chat-message-count" readout added to apps/mobile/app/(chat)/index.tsx for
-# this flow (messages.length rendered as text). Individual text assertions below only
-# prove presence — they would still pass if the CRDT merge duplicated an op and
-# rendered the same bubble twice. The exact count is what catches that.
+# The `assertVisible: "5 msgs"` check reads the testID="chat-message-count" readout
+# (apps/mobile/app/(chat)/index.tsx). Yjs updates are idempotent (applying the same op
+# twice is a no-op), so this isn't catching a duplicated *CRDT* op — it catches
+# app-level bugs that re-send a message as a brand new op (two distinct Y.Array entries
+# with identical text, which the 5 individual `assertVisible` checks below could not
+# tell apart from a correct single entry) or that silently drop one.
+#
+# Review-round-1 fix (Critical): none of the above proves CONVERGENT ORDER. A and B's
+# inserts are concurrent at the CRDT root, and Yjs resolves that by clientID — a
+# hardcoded expected order would be provably flaky (whichever client happens to have
+# the lower clientID this run wins the tie, and clientID is randomly assigned per
+# Y.Doc). Instead this is a RELATIONAL assertion: client B independently computes a
+# digest of its own final message order and run.sh threads it in as EXPECTED_ORDER;
+# device A renders the same digest (computeOrderDigest, shared via
+# apps/mobile/src/utils/orderDigest.ts) over its own Zustand-projected list via
+# testID="chat-order-digest". If A and B ever disagreed on order — not just contents —
+# this is the only assertion in the flow that would catch it.
 appId: com.chatcrdt.app
 ---
 - extendedWaitUntil:
     visible: "${RUN_ID}-B-offline-2"
-    timeout: 45000
+    # WebSocketProvider's reconnect backoff caps at 30s between attempts and does NOT
+    # reset until a connection actually succeeds, so from an arbitrary point during
+    # part 2's offline window the next retry could be just under 30s away. 45s cut it
+    # too close on a loaded machine; 60s gives real margin over the 30s cap plus
+    # handshake + Metro/JS-thread scheduling time.
+    timeout: 60000
 - assertVisible: "${RUN_ID}-A-online-1"
 - assertVisible: "${RUN_ID}-A-offline-1"
 - assertVisible: "${RUN_ID}-A-offline-2"
 - assertVisible: "${RUN_ID}-B-offline-1"
 - assertVisible: "${RUN_ID}-B-offline-2"
 - assertVisible: "5 msgs"
+- assertVisible: "${EXPECTED_ORDER}"

@@ -46,16 +46,41 @@ start() {
 stop() {
   local pids
   pids="$(lsof -ti ":${PORT}" || true)"
-  if [ -n "$pids" ]; then
-    kill $pids
-    echo "[server-ctl] stopped pids: $pids"
-    for _ in $(seq 1 10); do
-      if ! lsof -i ":${PORT}" -sTCP:LISTEN -t >/dev/null 2>&1; then break; fi
+  if [ -z "$pids" ]; then
+    echo "[server-ctl] nothing listening on :${PORT}"
+    return 0
+  fi
+
+  kill $pids
+  echo "[server-ctl] sent SIGTERM to pids: $pids"
+  for _ in $(seq 1 10); do
+    if ! lsof -i ":${PORT}" -sTCP:LISTEN -t >/dev/null 2>&1; then
+      echo "[server-ctl] confirmed :${PORT} closed"
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  # Didn't go down gracefully — escalate, then give it one more short window.
+  local stragglers
+  stragglers="$(lsof -ti ":${PORT}" || true)"
+  if [ -n "$stragglers" ]; then
+    echo "[server-ctl] still listening after SIGTERM — sending SIGKILL to: $stragglers" >&2
+    kill -9 $stragglers 2>/dev/null || true
+    for _ in $(seq 1 6); do
+      if ! lsof -i ":${PORT}" -sTCP:LISTEN -t >/dev/null 2>&1; then
+        echo "[server-ctl] confirmed :${PORT} closed after SIGKILL"
+        return 0
+      fi
       sleep 0.5
     done
-  else
-    echo "[server-ctl] nothing listening on :${PORT}"
   fi
+
+  # "Go offline" only works if the port actually closed — a silent no-op here would
+  # make every downstream flow step run against a server that's still up, which the
+  # reviewed-out original version could not detect.
+  echo "[server-ctl] FAILED to close :${PORT} — something is still listening" >&2
+  return 1
 }
 
 reset_room() {

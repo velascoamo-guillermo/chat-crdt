@@ -31,6 +31,14 @@
 # login screen was never shown. The `runFlow: when: visible: "# general"` guard below
 # logs out through the real UI first so this flow deterministically exercises the
 # login screen every run, regardless of leftover Keychain state.
+#
+# Review-round-1 fix: this flow used to send the "online" message right after login
+# without checking the WebSocket was actually up — an optimistic local insert would
+# have made the message appear and the assertion pass even with a dead socket, which
+# doesn't prove the "round trip while online" claim the flow's name makes. The
+# `extendedWaitUntil: visible: "connected"` below reads the QA-only chat-ws-status
+# readout (apps/mobile/app/(chat)/index.tsx, gated by EXPO_PUBLIC_QA_READOUT=1 — see
+# run.sh) so we only send once WebSocketProvider has actually confirmed `connected`.
 appId: com.chatcrdt.app
 ---
 - launchApp:
@@ -47,6 +55,9 @@ appId: com.chatcrdt.app
 - inputText: "password123"
 - tapOn: "Login"
 - assertVisible: "# general"
+- extendedWaitUntil:
+    visible: "connected"
+    timeout: 15000
 - tapOn: "Message…"
 - inputText: "${RUN_ID}-A-online-1"
 - tapOn: "Up"

@@ -20,10 +20,23 @@
 # below is a no-op if the app is already foregrounded (SQLite/Yjs state — and thus the
 # 3 messages already sent — is untouched either way) and recovers it otherwise, so this
 # flow doesn't flake on unrelated host load.
+#
+# Review-round-1 fix: "offline" was previously assumed from run.sh's step ordering
+# alone — this flow never actually checked the app agreed it was offline, so a slow
+# WebSocketProvider close (or a server-ctl.sh stop() that silently failed to close the
+# port) could have let these "offline" sends round-trip over a socket that was still
+# alive, defeating the whole point of part 2. The two `extendedWaitUntil: visible:
+# "disconnected"` checks below read the same QA-only chat-ws-status readout as part 1,
+# once before sending (proves the socket is really down before we start) and once
+# after the process-death relaunch (proves it's *still* down — these messages can only
+# have survived via op-sqlite, and the app hasn't silently reconnected behind us).
 appId: com.chatcrdt.app
 ---
 - launchApp:
     clearState: false
+- extendedWaitUntil:
+    visible: "disconnected"
+    timeout: 15000
 - tapOn: "Message…"
 - inputText: "${RUN_ID}-A-offline-1"
 - tapOn: "Up"
@@ -38,3 +51,6 @@ appId: com.chatcrdt.app
 - assertVisible: "${RUN_ID}-A-online-1"
 - assertVisible: "${RUN_ID}-A-offline-1"
 - assertVisible: "${RUN_ID}-A-offline-2"
+- extendedWaitUntil:
+    visible: "disconnected"
+    timeout: 15000

@@ -26,11 +26,21 @@ import { HeaderAccount, OnlinePill } from "../../src/components/ChatHeader";
 import { Composer } from "../../src/components/Composer";
 import { darkTheme, theme } from "../../src/ui";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
+import { computeOrderDigest } from "../../src/utils/orderDigest";
 
 const LIST_PADDING = 8;
 // Native stack header content height (excludes the status-bar/safe area, which
 // we add separately from the top inset). iOS 44, Android 56.
 const HEADER_BASE = Platform.OS === "ios" ? 44 : 56;
+
+// QA-only readout for the Maestro E2E offline-sync flow (apps/mobile/.maestro).
+// Requires BOTH __DEV__ (never true in a release build, regardless of env
+// misconfiguration) AND an explicit opt-in env var — so it stays invisible in
+// ordinary local dev too, and only run.sh's Metro invocation (which sets
+// EXPO_PUBLIC_QA_READOUT=1) turns it on. Verify by launching without the env
+// var: the readout is absent even though __DEV__ is true.
+const QA_READOUT_ENABLED =
+  __DEV__ && process.env.EXPO_PUBLIC_QA_READOUT === "1";
 
 export default function ChatScreen() {
   const scheme = useColorScheme();
@@ -106,14 +116,37 @@ export default function ChatScreen() {
       <KeyboardStickyView style={[styles.composer]}>
         <View onLayout={handleComposerLayout}>
           <TypingIndicator typingUsers={typingUsers} />
-          {/* QA-only readout of the merged message count. Backs the Maestro E2E
-              convergence assertion (apps/mobile/.maestro) — a hard count is a much
-              stronger "no duplicates" signal than scraping bubble text, since a
-              duplicated CRDT op would inflate this number even when two bubbles
-              happen to render identical text. */}
-          <Text testID="chat-message-count" style={styles.debugCount}>
-            {`${messages.length} msgs`}
-          </Text>
+          {/* QA-only readout for the Maestro E2E offline-sync flow — gated by
+              QA_READOUT_ENABLED (see above), never present in a release build.
+              Three signals the flow can't get from scraping bubble text alone:
+              - chat-message-count: exact merged count. Yjs updates are
+                idempotent (applying the same op twice is a no-op), so this
+                isn't catching duplicated CRDT ops — it catches app-level bugs
+                that re-send a message as a *new* op (two distinct array
+                entries with identical text) or that lose one.
+              - chat-order-digest: hash of rendered content in list order
+                (computeOrderDigest, src/utils/orderDigest.ts). Presence
+                assertions alone can't distinguish convergent order from any
+                other permutation of the same 5 texts; the flow compares this
+                against the same digest computed independently by the headless
+                client B script over its own final view.
+              - chat-ws-status: raw wsStatus ("connected"/"connecting"/
+                "disconnected"), so the flow can assert a real round trip
+                (part 1) and a real severed connection (part 2) instead of
+                inferring connection state from message delivery alone. */}
+          {QA_READOUT_ENABLED && (
+            <>
+              <Text testID="chat-message-count" style={styles.debugReadout}>
+                {`${messages.length} msgs`}
+              </Text>
+              <Text testID="chat-order-digest" style={styles.debugReadout}>
+                {computeOrderDigest(messages.map((m) => m.content))}
+              </Text>
+              <Text testID="chat-ws-status" style={styles.debugReadout}>
+                {wsStatus}
+              </Text>
+            </>
+          )}
           <Composer onSend={handleSend} sendTyping={sendTyping} />
         </View>
       </KeyboardStickyView>
@@ -124,7 +157,7 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   list: { flex: 1 },
-  debugCount: {
+  debugReadout: {
     alignSelf: "center",
     fontSize: 9,
     opacity: 0.35,

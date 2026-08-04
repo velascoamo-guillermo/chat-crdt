@@ -1,11 +1,22 @@
 {
   "name": "@chat-crdt/shared",
   "version": "0.0.1",
+  "description": "Shared DTOs and constants for chat-crdt (mobile, server, sync-engine).",
+  "keywords": [
+    "chat-crdt",
+    "shared",
+    "types"
+  ],
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/velascoamo-guillermo/chat-crdt.git",
+    "directory": "packages/shared"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "exports": {
     ".": {

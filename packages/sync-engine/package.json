@@ -40,7 +40,7 @@
   },
   "scripts": {
     "build": "tsc && tsc -p tsconfig.esm.json && node scripts/postbuild-esm.mjs",
-    "test": "bun test",
+    "test": "bun test && node scripts/smoke-test.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
@@ -48,7 +48,7 @@
     "ulid": "^2.3.0",
     "y-protocols": "^1.0.6",
     "lib0": "^0.2.109",
-    "@chat-crdt/shared": "workspace:*"
+    "@chat-crdt/shared": "^0.1.0"
   },
   "peerDependencies": {
     "yjs": "^13.6.0"

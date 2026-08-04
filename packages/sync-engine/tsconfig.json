@@ -5,7 +5,14 @@
     "rootDir": "src",
     "module": "CommonJS",
     "moduleResolution": "node",
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    // The published tarball ships "dist" only (no "src") — inline the
+    // original source into .js.map so stack traces still resolve without a
+    // dangling reference to an excluded file. Declaration maps have no
+    // inlineSources equivalent, so disable them instead of shipping a
+    // .d.ts.map that points at a file the consumer will never have.
+    "inlineSources": true,
+    "declarationMap": false
   },
   "include": ["src"],
   "exclude": ["dist", "node_modules", "**/*.test.ts"]

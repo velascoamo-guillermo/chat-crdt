@@ -1,6 +1,6 @@
 {
   "name": "@chat-crdt/shared",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Shared DTOs and constants for chat-crdt (mobile, server, sync-engine).",
   "keywords": [
     "chat-crdt",
@@ -25,10 +25,14 @@
       "default": "./dist/index.js"
     }
   },
+  "type": "commonjs",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

@@ -6,7 +6,6 @@ import {
   Platform,
   type LayoutChangeEvent,
   type ScrollViewProps,
-  useColorScheme,
 } from "react-native";
 import { FlashList } from "@shopify/flash-list";
 import { LinearGradient } from "expo-linear-gradient";
@@ -24,7 +23,7 @@ import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
 import { HeaderAccount, OnlinePill } from "../../src/components/ChatHeader";
 import { Composer } from "../../src/components/Composer";
-import { darkTheme, theme, useUITheme } from "../../src/ui";
+import { useUITheme } from "../../src/ui";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { computeOrderDigest } from "../../src/utils/orderDigest";
 
@@ -52,7 +51,6 @@ function headerTitle(roomId: string): string {
 export default function ChatScreen() {
   const { roomId: roomIdParam } = useLocalSearchParams<{ roomId: string }>();
   const roomId = roomIdParam ?? "default";
-  const scheme = useColorScheme();
   const messages = useRoomMessages(roomId);
   const wsStatus = useRoomWsStatus(roomId);
   const { sendMessage, sendTyping, getAwareness, membership } = useSync(roomId);
@@ -135,7 +133,7 @@ export default function ChatScreen() {
           stay visible but dissolve into the bg as they slide past the composer
           into the home-indicator zone. Sits under the floating glass composer. */}
       <LinearGradient
-        colors={["transparent", scheme === "dark" ? darkTheme.bg : theme.bg]}
+        colors={["transparent", t.bg]}
         style={[styles.edge, { height: bottom + 24 }]}
         pointerEvents="none"
       />

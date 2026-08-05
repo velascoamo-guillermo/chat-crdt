@@ -9,8 +9,13 @@ export interface RoomSummary {
   role: string;
 }
 
+// Nest's ValidationPipe returns `message` as either a single string or an
+// array of constraint-violation strings (one per failed validator) — e.g.
+// creating a reserved room name fails class-validator's @IsNotIn, which
+// lands here as `message: ["name is reserved (...)"]`. Both shapes must
+// surface to the user, not just the single-string case.
 interface ErrorBody {
-  message?: string;
+  message?: string | string[];
 }
 
 async function extractErrorMessage(res: Response, fallback: string): Promise<string> {
@@ -18,6 +23,9 @@ async function extractErrorMessage(res: Response, fallback: string): Promise<str
   if (body && typeof body === 'object' && 'message' in body) {
     const message = (body as ErrorBody).message;
     if (typeof message === 'string') return message;
+    if (Array.isArray(message) && message.every((m) => typeof m === 'string') && message.length > 0) {
+      return message.join(', ');
+    }
   }
   return fallback;
 }
@@ -31,7 +39,7 @@ interface RoomsState {
   joinRoom: (name: string) => Promise<RoomSummary>;
 }
 
-export const useRoomsStore = create<RoomsState>((set) => ({
+export const useRoomsStore = create<RoomsState>((set, get) => ({
   rooms: [],
   isLoading: false,
   error: null,
@@ -39,6 +47,11 @@ export const useRoomsStore = create<RoomsState>((set) => ({
   fetchRooms: async () => {
     const token = useAuthStore.getState().token;
     if (!token) return;
+    // Guard against overlapping fetches — e.g. the rooms screen's mount
+    // effect and a pull-to-refresh firing close together would otherwise
+    // both be in flight, racing to set() `rooms` with whichever resolves
+    // last "winning" regardless of which one was actually most recent.
+    if (get().isLoading) return;
     set({ isLoading: true, error: null });
     try {
       const res = await fetch(`${API}/rooms`, {

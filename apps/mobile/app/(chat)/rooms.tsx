@@ -27,8 +27,16 @@ export default function RoomsScreen() {
   const t = useUITheme();
   const router = useRouter();
   const { bottom } = useSafeAreaInsets();
-  const { rooms, isLoading, error, fetchRooms, createRoom, joinRoom } =
-    useRoomsStore();
+  // Narrow selectors — each subscribes only to the slice it reads, instead
+  // of destructuring the whole store object (which would re-render on ANY
+  // store field change, including unrelated ones like isLoading toggling
+  // during a background fetchRooms() the create/join actions don't care about).
+  const rooms = useRoomsStore((s) => s.rooms);
+  const isLoading = useRoomsStore((s) => s.isLoading);
+  const error = useRoomsStore((s) => s.error);
+  const fetchRooms = useRoomsStore((s) => s.fetchRooms);
+  const createRoom = useRoomsStore((s) => s.createRoom);
+  const joinRoom = useRoomsStore((s) => s.joinRoom);
 
   const [actionError, setActionError] = useState<string | null>(null);
   const nameDraft = useNativeState("");
@@ -39,7 +47,15 @@ export default function RoomsScreen() {
 
   const openRoom = useCallback(
     (room: RoomSummary) => {
-      router.push(`/(chat)/${room.name}`);
+      // router.navigate (not push): if this room's screen is already in the
+      // stack (e.g. /(chat)/index already redirected to /(chat)/default,
+      // and the user opens "# default" from this list) navigate dedupes to
+      // the existing entry instead of mounting a second instance. A second
+      // live instance would double-register with chat.store's per-room
+      // mount count and, if it were ever popped, decrement a survivor's
+      // count rather than deleting stale data outright — but the correct
+      // fix is not creating the duplicate mount in the first place.
+      router.navigate(`/(chat)/${room.name}`);
     },
     [router],
   );

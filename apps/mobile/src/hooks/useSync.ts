@@ -31,6 +31,7 @@ export function useSync(roomId: string) {
   const logout = useAuthStore(s => s.logout);
   const setMessages = useChatStore(s => s.setMessages);
   const setWsStatus = useChatStore(s => s.setWsStatus);
+  const registerMount = useChatStore(s => s.registerMount);
   const clearRoom = useChatStore(s => s.clearRoom);
 
   // Starts 'unknown' and only ever moves forward to 'ok' or 'not-a-member'
@@ -44,6 +45,13 @@ export function useSync(roomId: string) {
 
   useEffect(() => {
     if (!token || !user) return;
+
+    // Registered synchronously so it's paired 1:1 with this effect's own
+    // cleanup below, regardless of whether the async load()/connect chain
+    // below ever settles. Safety net for double-mount navigation bugs (see
+    // chat.store.ts) — clearRoom() only wipes this room's data once every
+    // registered mount has torn down.
+    registerMount(roomId);
 
     // Single shared db file across all rooms (unchanged from the single-room
     // MVP — keeps existing installs' persisted 'default' room history
@@ -97,13 +105,32 @@ export function useSync(roomId: string) {
     return () => {
       cancelled = true;
       unsubMessages?.();
-      persistence.destroy();
       provider?.destroy();
-      engine.destroy();
-      db.closeSync();
       providerRef.current = null;
       engineRef.current = null;
       clearRoom(roomId);
+      // Ordering matters and is NOT interchangeable:
+      //   1. persistence.destroy() — flushes the last debounced write. Its
+      //      final persist() reads engine.encodeState() synchronously
+      //      before this promise's first await, so it MUST run against the
+      //      still-live doc — i.e. before engine.destroy() below.
+      //   2. engine.destroy() only once that flush has actually landed in
+      //      storage (destroy() now resolves on the write settling, not on
+      //      it merely starting — see packages/sync-engine
+      //      SQLitePersistence.destroy()).
+      //   3. db.closeAsync() only after both — closing the handle any
+      //      earlier could race the write and silently drop up to
+      //      `debounceMs` of updates on navigation/logout.
+      // React doesn't await effect cleanups, hence the fire-and-forget
+      // `void` — but the internal chain still runs in this exact order.
+      // The db is shared across all room screens, but expo-sqlite refcounts
+      // native handles per openDatabaseSync() call, so this screen's own
+      // closeAsync() (called after ITS OWN flush) never affects a still-open
+      // sibling room's handle.
+      void persistence.destroy().then(() => {
+        engine.destroy();
+        return db.closeAsync();
+      });
     };
   }, [token, user?.id, roomId]);
 

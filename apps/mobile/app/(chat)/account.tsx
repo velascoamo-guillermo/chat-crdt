@@ -31,8 +31,11 @@ export default function AccountScreen() {
     logout();
   }, [logout]);
 
+  // navigate (not push): revisiting the account sheet → Rooms repeatedly
+  // must dedupe to the existing /(chat)/rooms entry rather than stacking a
+  // fresh one each time (unbounded stack growth otherwise).
   const handleRooms = useCallback(() => {
-    router.push("/(chat)/rooms");
+    router.navigate("/(chat)/rooms");
   }, [router]);
 
   return (

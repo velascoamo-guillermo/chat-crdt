@@ -1,0 +1,30 @@
+# Vanilla Prometheus (no Prometheus Operator, no CRDs) using kubernetes_sd_configs
+# to discover pods directly — this is what lets it scrape BOTH server replicas
+# individually instead of hitting whichever pod the Service round-robins to.
+# Needs read-only API access to list/watch pods.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: chat-crdt-prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: chat-crdt-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: chat-crdt
+roleRef:
+  kind: ClusterRole
+  name: chat-crdt-prometheus
+  apiGroup: rbac.authorization.k8s.io

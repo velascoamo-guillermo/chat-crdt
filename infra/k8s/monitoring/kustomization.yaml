@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - prometheus-rbac.yaml
+  - prometheus-config.yaml
+  - prometheus-deployment.yaml
+  - grafana-provisioning.yaml
+  - grafana-deployment.yaml
+
+# Generates the "grafana-dashboards" ConfigMap from the committed dashboard
+# JSON (infra/k8s/monitoring/dashboards/chat-crdt-server.json) rather than
+# duplicating it inline in a hand-written ConfigMap YAML.
+configMapGenerator:
+  - name: grafana-dashboards
+    files:
+      - dashboards/chat-crdt-server.json
+
+generatorOptions:
+  disableNameSuffixHash: true

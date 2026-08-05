@@ -1,6 +1,8 @@
 # chat-crdt
 
-Offline-first real-time chat with CRDT sync. Single-room MVP.
+Offline-first real-time chat with CRDT sync. Multi-room: users create,
+list, and join rooms; a 'default' room stays open to every authenticated
+user with no explicit join.
 
 > **Staff Mobile portfolio project.** Demonstrates offline-first architecture, CRDT merge semantics, cross-platform sync, and extractable npm library design.
 
@@ -86,7 +88,9 @@ See [docs/adr/](docs/adr/) for documented architecture decisions.
 
 **Messages are CRDT-only.** No `Message` rows in the database — chat history lives entirely in Yjs state, persisted as a single `yjsState` blob on the `Room` model. This keeps the DB schema minimal and makes CRDT the single source of truth.
 
-**Room authorization via `RoomMember`.** Every WebSocket connection is authorized against the `RoomMember` join table. Users can only sync rooms they belong to.
+**Room authorization via `RoomMember`.** Every WebSocket connection is authorized against the `RoomMember` join table. Users can only sync rooms they belong to — except the special `'default'` room, an open lobby every authenticated user may enter with no membership row (`SyncGateway.handleConnection` skips the check for it, and `GET /rooms` always includes it in the listing). Joining a non-default room is currently open to any authenticated user (`POST /rooms/:name/join`, MVP semantics — no invite/approval flow yet).
+
+**Multi-room client lifecycle.** The mobile app runs one `SyncEngine` + `WebSocketProvider` + `SQLitePersistence` per open room screen (`apps/mobile/src/hooks/useSync.ts`), created when the room screen mounts and torn down in its effect cleanup when the screen unmounts — no leaked sockets or timers when navigating between rooms. Teardown is strictly sequenced: `SQLitePersistence.destroy()` flushes the last debounced write and resolves only once that write has actually landed in storage (not merely started — see `packages/sync-engine/src/SQLitePersistence.destroyAwaitsFlush.test.ts`), *then* the `SyncEngine`'s Yjs doc is destroyed, *then* the SQLite handle is closed — closing any earlier could race the flush and silently drop the last debounced write. Navigation to a room uses `router.navigate` (not `push`) so revisiting an already-open room dedupes to its existing screen instead of mounting a duplicate; `chat.store`'s per-room mount refcount (`registerMount`/`clearRoom`) is a belt-and-suspenders backstop that only deletes a room's data once every mounted instance for it has torn down. All rooms share one SQLite database; `SQLitePersistence` already keys storage by `yjs:${roomId}`, so per-room state never cross-contaminates (see `packages/sync-engine/src/SQLitePersistence.roomScoping.test.ts`). A WebSocket closed with code `4003` (authenticated but not a room member) surfaces as a "not a member" state in the UI rather than the generic auth-failure logout used for other `4xxx` codes. Room names `rooms`, `account`, and `default` are reserved server-side (`CreateRoomDto`) because they'd shadow the mobile client's static `(chat)/rooms` and `(chat)/account` routes.
 
 ## Offline-first flow
 

@@ -13,7 +13,7 @@
 #   1 online (A) + 2 offline (A, proven to survive relaunch in part 2) + 2 offline (B)
 #
 # The `assertVisible: "5 msgs"` check reads the testID="chat-message-count" readout
-# (apps/mobile/app/(chat)/index.tsx). Yjs updates are idempotent (applying the same op
+# (apps/mobile/app/(chat)/[roomId].tsx). Yjs updates are idempotent (applying the same op
 # twice is a no-op), so this isn't catching a duplicated *CRDT* op — it catches
 # app-level bugs that re-send a message as a brand new op (two distinct Y.Array entries
 # with identical text, which the 5 individual `assertVisible` checks below could not

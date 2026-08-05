@@ -32,6 +32,11 @@ export class RoomsService {
     }));
 
     if (!rooms.some((r) => r.name === 'default')) {
+      // id: 'default' here is a SYNTHETIC placeholder, not the real Room.id
+      // UUID — the actual 'default' row may or may not exist yet (it's
+      // created lazily; see SyncGateway.getOrCreateRoom on first WS
+      // connect). Safe because every consumer (mobile client routing,
+      // POST /rooms/:name/join) keys off `name`, never this `id`.
       rooms.push({ id: 'default', name: 'default', role: 'member' });
     }
 

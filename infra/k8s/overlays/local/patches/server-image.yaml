@@ -1,0 +1,13 @@
+# kind-loaded local image — never pulled from a registry, so
+# imagePullPolicy must be Never or the kubelet will try (and fail) to pull.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          image: chat-crdt-server:local
+          imagePullPolicy: Never

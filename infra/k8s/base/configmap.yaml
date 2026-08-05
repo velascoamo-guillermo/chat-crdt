@@ -1,0 +1,14 @@
+# Non-secret server env. JWT_SECRET and DATABASE_URL are NOT here — they come
+# from the `chat-crdt-server-secrets` Secret (see infra/k8s/README.md for the
+# `kubectl create secret` command; values are never committed).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: server-config
+data:
+  PORT: "3001"
+  CORS_ORIGIN: "http://localhost:8081"
+  # Assumes a cluster-internal Service named "redis" in the same namespace —
+  # true for both overlays/local's dev Redis and a prod Redis Service/endpoint
+  # of the same name.
+  REDIS_URL: "redis://redis:6379"

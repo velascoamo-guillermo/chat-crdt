@@ -1,0 +1,68 @@
+# 2+ replicas so Redis fan-out (ADR-004) is actually exercised: two SyncGateway
+# instances, each with its own in-memory Y.Doc per room, converging through
+# Redis pub/sub. See infra/k8s/README.md for the local kind validation that
+# proves this.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: server
+  labels:
+    app: chat-crdt-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chat-crdt-server
+  template:
+    metadata:
+      labels:
+        app: chat-crdt-server
+      annotations:
+        # Static scrape hints for the bundled Prometheus (infra/k8s/monitoring)
+        # — not a ServiceMonitor, no Prometheus Operator dependency.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3001"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: server
+          image: chat-crdt-server
+          ports:
+            - name: http
+              containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: server-config
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: chat-crdt-server-secrets
+                  key: JWT_SECRET
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: chat-crdt-server-secrets
+                  key: DATABASE_URL
+          # /metrics needs no auth (see MetricsController) and is a cheap,
+          # always-200-when-healthy endpoint — doubles as a smoke test that
+          # the metrics module itself is wired correctly.
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

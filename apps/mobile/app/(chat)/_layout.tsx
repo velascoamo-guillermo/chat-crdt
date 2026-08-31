@@ -9,6 +9,16 @@ export default function ChatLayout() {
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen
         name="[roomId]"
+        // Stack-wide dedupe: without this, router.navigate() does NOT reuse
+        // an already-mounted [roomId] entry when the current top-of-stack
+        // route is something else (e.g. `rooms`) — StackRouter just pushes a
+        // fresh one, mounting a second live SyncEngine/WebSocketProvider/
+        // SQLitePersistence for the same room. `dangerouslySingular` makes
+        // expo-router derive a getId from the resolved `roomId` param
+        // (see expo-router's getSingularId), so navigating to a roomId
+        // already in the stack reuses that entry instead of pushing a
+        // duplicate; different roomIds still push distinct entries.
+        dangerouslySingular
         options={{
           contentStyle: { backgroundColor: undefined },
           headerStyle: { backgroundColor: "transparent" },

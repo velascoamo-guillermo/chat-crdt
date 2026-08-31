@@ -31,11 +31,23 @@ export default function AccountScreen() {
     logout();
   }, [logout]);
 
-  // navigate (not push): revisiting the account sheet → Rooms repeatedly
-  // must dedupe to the existing /(chat)/rooms entry rather than stacking a
-  // fresh one each time (unbounded stack growth otherwise).
+  // dismissTo (not navigate/push): `account` is always presented as a modal
+  // (formSheet, see (chat)/_layout.tsx), so leaving it via plain
+  // router.navigate() left a stale modal-presentation record behind in
+  // react-native-screens' bookkeeping — harmless on its own, but once
+  // `[roomId]` became `dangerouslySingular` (see (chat)/_layout.tsx), the
+  // next singular-triggered stack reorder (tapping an already-open room
+  // from the rooms list) reshuffled that stale entry and hit
+  // RNSScreenStackView's "Modally presented controllers are being
+  // reshuffled" assertion — a reproducible native crash (verified via a
+  // deep link straight to /(chat)/rooms, bypassing this modal, which never
+  // crashed). dismissTo() dismisses the modal and lands on `/(chat)/rooms`
+  // in one native-aware transition; if `rooms` isn't already in the stack
+  // it replaces this screen instead of pushing (see expo-router's
+  // dismissTo docs) — same "dedupe on repeat visits" behavior the old
+  // comment described, minus the crash.
   const handleRooms = useCallback(() => {
-    router.navigate("/(chat)/rooms");
+    router.dismissTo("/(chat)/rooms");
   }, [router]);
 
   return (

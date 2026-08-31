@@ -8,10 +8,12 @@ type WsStatus = 'disconnected' | 'connecting' | 'connected';
 // so state MUST be namespaced per room. A flat single-room shape would let a
 // background room's messages/status clobber the foreground room's.
 //
-// mountCounts is a safety net against double-mount bugs: navigation should
-// dedupe (see rooms.tsx's use of router.navigate), but if two screen
-// instances for the same roomId are ever alive at once (e.g. a future
-// navigation change reintroduces router.push), clearRoom() must not delete
+// mountCounts is the second line of defense against double-mount bugs. The
+// real dedupe is `dangerouslySingular` on the `[roomId]` screen ((chat)/
+// _layout.tsx), which makes navigation reuse an already-mounted room's stack
+// entry instead of pushing a duplicate. But if two screen instances for the
+// same roomId are ever alive at once anyway (e.g. a future navigation change
+// drops singular or reintroduces router.push), clearRoom() must not delete
 // data the surviving instance still needs. registerMount/clearRoom are
 // always called in matching pairs from useSync's effect mount/cleanup, so
 // the count only reaches zero once every mounted instance for that room has

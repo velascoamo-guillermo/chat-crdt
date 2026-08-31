@@ -49,12 +49,15 @@ export default function RoomsScreen() {
     (room: RoomSummary) => {
       // router.navigate (not push): if this room's screen is already in the
       // stack (e.g. /(chat)/index already redirected to /(chat)/default,
-      // and the user opens "# default" from this list) navigate dedupes to
-      // the existing entry instead of mounting a second instance. A second
-      // live instance would double-register with chat.store's per-room
-      // mount count and, if it were ever popped, decrement a survivor's
-      // count rather than deleting stale data outright — but the correct
-      // fix is not creating the duplicate mount in the first place.
+      // and the user opens "# default" from this list) this reuses the
+      // existing entry instead of mounting a second instance. The dedupe
+      // itself comes from `dangerouslySingular` on the `[roomId]` screen
+      // (see (chat)/_layout.tsx) — router.navigate alone does not dedupe
+      // across arbitrary stack positions (no getId/singular configured, the
+      // StackRouter just pushes a fresh entry when the current top route
+      // isn't `[roomId]`, e.g. here where it's `rooms`). chat.store's
+      // mountCounts refcount remains a second line of defense in case a
+      // duplicate mount ever slips through some other path.
       router.navigate(`/(chat)/${room.name}`);
     },
     [router],

@@ -124,8 +124,3 @@ cd apps/server && npx jest
 - [ADR 007: @expo/ui native islands + FlashList split](docs/adr/007-expo-ui-native-islands.md)
 - [ADR 008: Zustand projection + awareness for ephemeral state](docs/adr/008-zustand-and-awareness-state.md)
 - [ADR 009: yjsState retention — monitor + GC now, epoch compaction on trigger](docs/adr/009-yjsstate-retention.md)
-
-## Audits
-
-- [2026-06-07 — initial full-stack audit](docs/audit-improvements.md) (all items closed except yjsState pruning)
-- [2026-06-12 — post-remediation audit](docs/audit-2026-06-12.md)

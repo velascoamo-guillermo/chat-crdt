@@ -47,6 +47,9 @@ export class SQLitePersistence {
   private destroyed = false;
   private readonly docUpdateHandler: () => void;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  // Tracks the most recently started storage.setItem() call so destroy() can
+  // await the actual write instead of racing it — see destroy() below.
+  private pendingWrite: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly engine: SyncEngine,
@@ -67,7 +70,7 @@ export class SQLitePersistence {
   private persist(): void {
     if (this.destroyed) return;
     const state = this.engine.encodeState();
-    this.storage.setItem(this.key, uint8ToBase64(state)).catch(() => {
+    this.pendingWrite = this.storage.setItem(this.key, uint8ToBase64(state)).catch(() => {
       // persist errors are non-fatal — next write will retry
     });
   }
@@ -88,7 +91,14 @@ export class SQLitePersistence {
     return this.loaded;
   }
 
-  destroy(): void {
+  /**
+   * Flushes any pending debounced write and resolves once it has actually
+   * landed in storage — NOT merely once it has been *started*. Callers that
+   * close the underlying storage handle (e.g. useSync.ts closing the SQLite
+   * db) right after calling destroy() MUST await this so the close doesn't
+   * race the write and silently drop up to `debounceMs` of updates.
+   */
+  async destroy(): Promise<void> {
     this.engine.doc.off('update', this.docUpdateHandler);
     // Flush a pending debounced write so the last update isn't lost on unmount.
     if (this.persistTimer) {
@@ -97,5 +107,9 @@ export class SQLitePersistence {
       this.persist();
     }
     this.destroyed = true;
+    // Awaits whichever write is most recent: the flush just triggered above,
+    // an earlier debounced write already in flight, or the initial resolved
+    // promise if nothing was ever persisted.
+    await this.pendingWrite;
   }
 }

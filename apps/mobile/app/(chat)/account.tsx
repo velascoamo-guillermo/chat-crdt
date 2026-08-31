@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { View, StyleSheet } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { useAuthStore } from "../../src/store/auth.store";
 import {
   Host,
@@ -22,12 +23,32 @@ export default function AccountScreen() {
   const logout = useAuthStore((s) => s.logout);
   const { bottom } = useSafeAreaInsets();
   const t = useUITheme();
+  const router = useRouter();
 
   // AuthGate (root layout) redirects to /(auth)/login once the token clears,
   // which tears down this sheet — no manual dismiss needed.
   const handleLogout = useCallback(() => {
     logout();
   }, [logout]);
+
+  // dismissTo (not navigate/push): `account` is always presented as a modal
+  // (formSheet, see (chat)/_layout.tsx), so leaving it via plain
+  // router.navigate() left a stale modal-presentation record behind in
+  // react-native-screens' bookkeeping — harmless on its own, but once
+  // `[roomId]` became `dangerouslySingular` (see (chat)/_layout.tsx), the
+  // next singular-triggered stack reorder (tapping an already-open room
+  // from the rooms list) reshuffled that stale entry and hit
+  // RNSScreenStackView's "Modally presented controllers are being
+  // reshuffled" assertion — a reproducible native crash (verified via a
+  // deep link straight to /(chat)/rooms, bypassing this modal, which never
+  // crashed). dismissTo() dismisses the modal and lands on `/(chat)/rooms`
+  // in one native-aware transition; if `rooms` isn't already in the stack
+  // it replaces this screen instead of pushing (see expo-router's
+  // dismissTo docs) — same "dedupe on repeat visits" behavior the old
+  // comment described, minus the crash.
+  const handleRooms = useCallback(() => {
+    router.dismissTo("/(chat)/rooms");
+  }, [router]);
 
   return (
     <View
@@ -55,25 +76,41 @@ export default function AccountScreen() {
         </Column>
       </Host>
 
-      <Host matchContents={{ vertical: true }}>
-        <Button
-          variant="text"
-          onPress={handleLogout}
-          modifiers={pillButton(t.status.offline)}
-        >
-          <Row spacing={8} alignment="center">
-            <Icon
-              name="rectangle.portrait.and.arrow.right"
-              size={18}
-              color="#ffffff"
-            />
-            <Text
-              textStyle={{ fontSize: 17, fontWeight: "600", color: "#ffffff" }}
-            >
-              Log out
-            </Text>
-          </Row>
-        </Button>
+      <Host matchContents={{ vertical: true }} style={styles.actionsHost}>
+        <Column spacing={12}>
+          <Button
+            variant="text"
+            onPress={handleRooms}
+            modifiers={pillButton(t.surface)}
+          >
+            <Row spacing={8} alignment="center">
+              <Icon name="bubble.left.and.bubble.right" size={18} color={t.textPrimary} />
+              <Text
+                textStyle={{ fontSize: 17, fontWeight: "600", color: t.textPrimary }}
+              >
+                Rooms
+              </Text>
+            </Row>
+          </Button>
+          <Button
+            variant="text"
+            onPress={handleLogout}
+            modifiers={pillButton(t.status.offline)}
+          >
+            <Row spacing={8} alignment="center">
+              <Icon
+                name="rectangle.portrait.and.arrow.right"
+                size={18}
+                color="#ffffff"
+              />
+              <Text
+                textStyle={{ fontSize: 17, fontWeight: "600", color: "#ffffff" }}
+              >
+                Log out
+              </Text>
+            </Row>
+          </Button>
+        </Column>
       </Host>
     </View>
   );
@@ -87,4 +124,5 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   identityHost: { alignSelf: "center" },
+  actionsHost: { alignSelf: "stretch" },
 });

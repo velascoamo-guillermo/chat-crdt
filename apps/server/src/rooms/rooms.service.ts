@@ -2,9 +2,46 @@ import { Injectable, NotFoundException, ConflictException } from '@nestjs/common
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoomDto } from './dto/create-room.dto';
 
+export interface RoomSummary {
+  id: string;
+  name: string;
+  role: string;
+}
+
 @Injectable()
 export class RoomsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Rooms visible to this user: every explicit RoomMember row, plus a
+   * synthetic "default" entry — 'default' is an open lobby (see
+   * SyncGateway.handleConnection) that every authenticated user can enter
+   * without ever calling POST /rooms/:name/join, so it must always be
+   * listed even before any membership row exists for it.
+   */
+  async listForUser(userId: string): Promise<RoomSummary[]> {
+    const memberships = await this.prisma.roomMember.findMany({
+      where: { userId },
+      include: { room: true },
+    });
+
+    const rooms: RoomSummary[] = memberships.map((m) => ({
+      id: m.room.id,
+      name: m.room.name,
+      role: m.role,
+    }));
+
+    if (!rooms.some((r) => r.name === 'default')) {
+      // id: 'default' here is a SYNTHETIC placeholder, not the real Room.id
+      // UUID — the actual 'default' row may or may not exist yet (it's
+      // created lazily; see SyncGateway.getOrCreateRoom on first WS
+      // connect). Safe because every consumer (mobile client routing,
+      // POST /rooms/:name/join) keys off `name`, never this `id`.
+      rooms.push({ id: 'default', name: 'default', role: 'member' });
+    }
+
+    return rooms;
+  }
 
   async create(dto: CreateRoomDto, userId: string) {
     const existing = await this.prisma.room.findUnique({ where: { name: dto.name } });

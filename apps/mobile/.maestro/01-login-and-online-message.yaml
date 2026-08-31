@@ -37,7 +37,7 @@
 # have made the message appear and the assertion pass even with a dead socket, which
 # doesn't prove the "round trip while online" claim the flow's name makes. The
 # `extendedWaitUntil: visible: "connected"` below reads the QA-only chat-ws-status
-# readout (apps/mobile/app/(chat)/index.tsx, gated by EXPO_PUBLIC_QA_READOUT=1 — see
+# readout (apps/mobile/app/(chat)/[roomId].tsx, gated by EXPO_PUBLIC_QA_READOUT=1 — see
 # run.sh) so we only send once WebSocketProvider has actually confirmed `connected`.
 appId: com.chatcrdt.app
 ---

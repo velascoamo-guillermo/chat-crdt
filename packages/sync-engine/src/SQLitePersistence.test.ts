@@ -73,8 +73,11 @@ describe('SQLitePersistence', () => {
     // Debounce window not elapsed → nothing written yet
     expect(await storage.getItem(`yjs:${engine.roomId}`)).toBeNull();
 
-    // destroy() must flush the pending write
-    persistence.destroy();
+    // destroy() must flush the pending write AND resolve only once it has
+    // actually landed in storage (not merely been started) — see
+    // SQLitePersistence.destroyAwaitsFlush.test.ts for a test that proves
+    // this against a storage backend with a deliberately delayed setItem.
+    await persistence.destroy();
     expect(await storage.getItem(`yjs:${engine.roomId}`)).not.toBeNull();
 
     const engine2 = new SyncEngine({ roomId: 'r1', userId: 'u1', username: 'alice' });

@@ -29,7 +29,7 @@
 #   - Mobile app built + installed on an iOS simulator, with the udid booted
 #     (`cd apps/mobile && bun run ios`, or `expo run:ios` once, then keep the
 #     simulator booted — this script only launches/relaunches, never (re)builds)
-#   - Metro running for that app WITH the QA readout flag set (index.tsx gates
+#   - Metro running for that app WITH the QA readout flag set ([roomId].tsx gates
 #     chat-message-count/chat-order-digest/chat-ws-status behind it, off by default —
 #     see the review-round-1 note there), e.g.:
 #       cd apps/mobile && EXPO_PUBLIC_QA_READOUT=1 bun run dev

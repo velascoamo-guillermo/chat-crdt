@@ -4,6 +4,7 @@ import {
   padding,
   buttonStyle,
   glassEffect,
+  accessibilityLabel as swiftAccessibilityLabel,
 } from "@expo/ui/swift-ui/modifiers";
 import {
   weight,
@@ -95,6 +96,16 @@ export function glassDisc(size_ = 38) {
       shape: "circle",
     }),
   ];
+}
+
+// SwiftUI accessibility-label modifier, iOS only. @expo/ui's own Icon
+// component's `accessibilityLabel` prop is Android-only today ("iOS
+// accessibility is not yet wired up" per its own type docs) — icon-only
+// buttons (no visible `label`/`children` text) are otherwise untargetable
+// by VoiceOver / XCUITest / Maestro's default text-matching `tapOn` on iOS.
+// Pair with Icon's own `accessibilityLabel` prop for the Android half.
+export function accessibleLabel(label: string) {
+  return Platform.OS === "android" ? [] : [swiftAccessibilityLabel(label)];
 }
 
 // Circular liquid glass icon button. Defaults to a neutral white tint; pass a

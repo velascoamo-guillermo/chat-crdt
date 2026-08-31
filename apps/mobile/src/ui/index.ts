@@ -21,4 +21,5 @@ export {
   circleButton,
   glassPill,
   glassDisc,
+  accessibleLabel,
 } from './modifiers';

@@ -10,10 +10,16 @@ import {
   statusColor,
   glassPill,
   glassDisc,
+  accessibleLabel,
   useUITheme,
 } from "../ui";
 
 const DISC = 38;
+// Icon-only button, no visible text — must be reachable by an accessibility
+// label for VoiceOver and for Maestro's `tapOn: "Account"` (see
+// accessibleLabel in ui/modifiers.ts for why this needs both the Icon prop
+// AND the iOS-only SwiftUI modifier).
+const ACCOUNT_LABEL = "Account";
 
 // Account action for the native header's right slot — SF Symbol on a liquid
 // glass disc. Opens the account formSheet (email + logout). The glass comes
@@ -25,8 +31,17 @@ export const HeaderAccount = memo(function HeaderAccount({
 }) {
   return (
     <Host matchContents={{ horizontal: true, vertical: true }}>
-      <Button variant="text" onPress={onPress} modifiers={glassDisc(DISC)}>
-        <Icon name="person.crop.circle.fill" size={28} color={theme.accent} />
+      <Button
+        variant="text"
+        onPress={onPress}
+        modifiers={[...glassDisc(DISC), ...accessibleLabel(ACCOUNT_LABEL)]}
+      >
+        <Icon
+          name="person.crop.circle.fill"
+          size={28}
+          color={theme.accent}
+          accessibilityLabel={ACCOUNT_LABEL}
+        />
       </Button>
     </Host>
   );

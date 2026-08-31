@@ -51,8 +51,19 @@ export const useChatStore = create<ChatState>((set) => ({
     }),
 }));
 
+// Stable reference for rooms with no messages yet. `s.messagesByRoom[roomId]
+// ?? []` would allocate a NEW empty array on every single selector call —
+// zustand (via useSyncExternalStore) compares snapshots by reference, so a
+// fresh [] every render never equals the previous one, and React re-renders
+// to get a "consistent" snapshot, which runs the selector again, which
+// allocates ANOTHER new array — an infinite loop ("Maximum update depth
+// exceeded"), reproducible only by actually rendering the screen (this
+// shipped once already and only surfaced under the live Maestro run, not
+// typecheck/lint/unit tests, which don't render anything).
+const EMPTY_MESSAGES: MessageDto[] = [];
+
 export function useRoomMessages(roomId: string): MessageDto[] {
-  return useChatStore((s) => s.messagesByRoom[roomId] ?? []);
+  return useChatStore((s) => s.messagesByRoom[roomId] ?? EMPTY_MESSAGES);
 }
 
 export function useRoomWsStatus(roomId: string): WsStatus {

@@ -1,0 +1,125 @@
+import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { UploadKeysDto } from './dto/upload-keys.dto';
+
+export interface PendingGrant {
+  userId: string;
+  keyId: number;
+  publicKey: string;
+}
+
+export interface RoomKeyGrantView {
+  roomId: string;
+  userId: string;
+  keyId: number;
+  wrappedKey: string;
+  recipientKeyFp: string;
+}
+
+/**
+ * ADR-010 key management: pending-grant discovery, grant upload (plain
+ * first-responder serving and the atomic epoch claim), and a member's own
+ * grant list. The server never wraps or unwraps a key — it only routes
+ * ciphertext grants clients hand it.
+ */
+@Injectable()
+export class RoomKeysService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async getPending(roomId: string, requesterId: string): Promise<PendingGrant[]> {
+    const room = await this.prisma.room.findUnique({ where: { id: roomId } });
+    if (!room) throw new NotFoundException(`Room "${roomId}" not found`);
+    await this.assertMember(roomId, requesterId);
+
+    if (room.currentKeyId === 0) return [];
+
+    const [members, grants] = await Promise.all([
+      this.prisma.roomMember.findMany({ where: { roomId }, include: { user: true } }),
+      this.prisma.roomKeyGrant.findMany({ where: { roomId } }),
+    ]);
+
+    const pending: PendingGrant[] = [];
+    for (const member of members) {
+      const { user } = member as unknown as {
+        user: { id: string; publicKey: string | null; publicKeyFp: string | null };
+      };
+      // Can't wrap a key for someone with no published public key yet.
+      if (!user.publicKey || !user.publicKeyFp) continue;
+
+      for (let keyId = 1; keyId <= room.currentKeyId; keyId++) {
+        // Matched on recipientKeyFp = current publicKeyFp, not mere row
+        // presence — a grant sealed to a since-replaced key must be
+        // re-offered (ADR-010, Multi-device / reinstall).
+        const hasCurrentGrant = grants.some(
+          (g) => g.userId === member.userId && g.keyId === keyId && g.recipientKeyFp === user.publicKeyFp,
+        );
+        if (!hasCurrentGrant) {
+          pending.push({ userId: member.userId, keyId, publicKey: user.publicKey });
+        }
+      }
+    }
+    return pending;
+  }
+
+  async getMyGrants(roomId: string, requesterId: string): Promise<RoomKeyGrantView[]> {
+    await this.assertMember(roomId, requesterId);
+    return this.prisma.roomKeyGrant.findMany({
+      where: { roomId, userId: requesterId },
+      orderBy: { keyId: 'asc' },
+    });
+  }
+
+  async uploadGrants(
+    roomId: string,
+    actorId: string,
+    dto: UploadKeysDto,
+  ): Promise<{ currentKeyId: number }> {
+    const actor = await this.assertMember(roomId, actorId);
+
+    if (!dto.claimEpoch) {
+      // First-responder pattern: any online member holding epoch(s) a
+      // pending member needs can serve them — no admin gate here.
+      await this.prisma.roomKeyGrant.createMany({
+        data: dto.grants.map((g) => ({ roomId, ...g })),
+        skipDuplicates: true,
+      });
+      const room = await this.prisma.room.findUniqueOrThrow({ where: { id: roomId } });
+      return { currentKeyId: room.currentKeyId };
+    }
+
+    // Enablement (0->1) and every rotation thereafter: reviewer-flagged
+    // residual from the ADR — require RoomMember.role === 'admin' for the
+    // epoch-claim POST (rooms.service.ts sets the room creator admin).
+    if (actor.role !== 'admin') {
+      throw new ForbiddenException('Only a room admin can claim a key epoch');
+    }
+
+    const { expectedCurrentKeyId } = dto.claimEpoch;
+
+    return this.prisma.$transaction(async (tx) => {
+      // Conditional increment + grant insert in one transaction: either
+      // both commit or neither does, closing the orphan-epoch window a
+      // two-step version would leave open (ADR-010, Rotation authority).
+      const updated = await tx.room.updateMany({
+        where: { id: roomId, currentKeyId: expectedCurrentKeyId },
+        data: { currentKeyId: { increment: 1 } },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException('Room key epoch has already advanced — retry with the current epoch');
+      }
+      await tx.roomKeyGrant.createMany({
+        data: dto.grants.map((g) => ({ roomId, ...g })),
+        skipDuplicates: true,
+      });
+      return { currentKeyId: expectedCurrentKeyId + 1 };
+    });
+  }
+
+  private async assertMember(roomId: string, userId: string) {
+    const member = await this.prisma.roomMember.findUnique({
+      where: { roomId_userId: { roomId, userId } },
+    });
+    if (!member) throw new ForbiddenException('Not a member of this room');
+    return member;
+  }
+}

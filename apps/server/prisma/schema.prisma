@@ -15,15 +15,46 @@ model User {
   password    String       @db.VarChar(255)
   createdAt   DateTime     @default(now())
   memberships RoomMember[]
+  // ADR-010: X25519 public half, published at registration or lazily via
+  // PUT /users/me/public-key. publicKeyFp is a hash of publicKey, used to
+  // detect stale RoomKeyGrant rows after a reinstall (see RoomKeyGrant).
+  publicKey   String?
+  publicKeyFp String?
+  keyGrants   RoomKeyGrant[]
 }
 
 model Room {
-  id          String       @id @default(uuid())
-  name        String       @unique
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  yjsState    Bytes?
-  memberships RoomMember[]
+  id           String       @id @default(uuid())
+  name         String       @unique
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  yjsState     Bytes?
+  memberships  RoomMember[]
+  // ADR-010: 0 = E2EE not enabled for this room. Enabling (0 -> 1) and every
+  // rotation thereafter goes through the same atomic epoch claim in
+  // POST /rooms/:id/keys.
+  currentKeyId Int          @default(0)
+  keyGrants    RoomKeyGrant[]
+}
+
+// ADR-010: one row per (member, epoch) pair that member has actually been
+// granted. recipientKeyFp records the fingerprint the uploader actually
+// sealed against (verbatim, not server-derived) so a grant sealed to a
+// since-replaced publicKey stops matching User.publicKeyFp and is correctly
+// re-offered via GET /rooms/:id/keys/pending instead of silently stranding
+// the member.
+model RoomKeyGrant {
+  roomId         String
+  userId         String
+  keyId          Int
+  wrappedKey     String
+  recipientKeyFp String
+  createdAt      DateTime @default(now())
+  room           Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, userId, keyId])
+  @@index([userId])
 }
 
 model RoomMember {

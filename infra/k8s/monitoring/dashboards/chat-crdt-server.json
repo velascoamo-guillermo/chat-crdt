@@ -25,12 +25,19 @@
         "x": 0,
         "y": 0
       },
-      "datasource": null,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "ws_connections",
           "legendFormat": "{{pod}}",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
         }
       ]
     },
@@ -44,12 +51,19 @@
         "x": 12,
         "y": 0
       },
-      "datasource": null,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "rooms_loaded",
           "legendFormat": "{{pod}}",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
         }
       ]
     },
@@ -63,18 +77,25 @@
         "x": 0,
         "y": 8
       },
-      "datasource": null,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(rate(messages_total[1m])) by (type)",
           "legendFormat": "{{type}}",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
         }
       ]
     },
     {
       "id": 4,
-      "title": "Redis fan-out bytes/sec",
+      "title": "Redis fan-out bytes/sec (by channel)",
       "type": "timeseries",
       "gridPos": {
         "h": 8,
@@ -82,12 +103,19 @@
         "x": 12,
         "y": 8
       },
-      "datasource": null,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
-          "expr": "sum(rate(fanout_bytes_total[1m]))",
-          "legendFormat": "bytes/sec",
-          "refId": "A"
+          "expr": "sum(rate(fanout_bytes_total[1m])) by (channel)",
+          "legendFormat": "{{channel}}",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
         }
       ]
     },
@@ -101,7 +129,10 @@
         "x": 0,
         "y": 16
       },
-      "datasource": null,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "s"
@@ -112,7 +143,11 @@
         {
           "expr": "histogram_quantile(0.95, sum(rate(persist_duration_seconds_bucket[5m])) by (le))",
           "legendFormat": "P95",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
         }
       ]
     },
@@ -126,7 +161,10 @@
         "x": 12,
         "y": 16
       },
-      "datasource": null,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "fieldConfig": {
         "defaults": {
           "unit": "bytes",
@@ -150,7 +188,11 @@
         {
           "expr": "yjs_state_bytes",
           "legendFormat": "{{roomId}} ({{pod}})",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
         }
       ]
     },
@@ -164,11 +206,18 @@
         "x": 0,
         "y": 24
       },
-      "datasource": null,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(rooms_loaded)",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
         }
       ]
     },
@@ -182,11 +231,18 @@
         "x": 6,
         "y": 24
       },
-      "datasource": null,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
       "targets": [
         {
           "expr": "sum(ws_connections)",
-          "refId": "A"
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
         }
       ]
     }

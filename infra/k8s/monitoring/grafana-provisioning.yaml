@@ -7,6 +7,12 @@ data:
     apiVersion: 1
     datasources:
       - name: Prometheus
+        # Explicit uid so the provisioned dashboard JSON
+        # (infra/k8s/monitoring/dashboards/chat-crdt-server.json) can pin its
+        # panels to this exact datasource instance by id instead of relying
+        # on "default datasource" resolution — the two are provisioned
+        # together so an implicit link is unnecessary risk.
+        uid: prometheus
         type: prometheus
         access: proxy
         url: http://prometheus:9090

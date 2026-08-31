@@ -10,6 +10,18 @@ metadata:
     app: chat-crdt-server
 spec:
   replicas: 2
+  # maxUnavailable: 0 so a rollout never drops below `replicas` pods able to
+  # accept new connections; maxSurge brings up the new pod first. This does
+  # NOT prevent existing long-lived WS connections on a terminating pod from
+  # dropping when it's replaced — clients must reconnect (see sync-engine's
+  # reconnect logic client-side). terminationGracePeriodSeconds gives an
+  # outgoing pod time to let SyncGateway's disconnect path run (awareness
+  # cleanup, final persist) instead of being SIGKILLed mid-flight.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: chat-crdt-server
@@ -24,9 +36,20 @@ spec:
         prometheus.io/port: "3001"
         prometheus.io/path: "/metrics"
     spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000 # node:20-alpine's built-in `node` user — see apps/server/Dockerfile's USER
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: server
           image: chat-crdt-server
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: http
               containerPort: 3001
@@ -66,3 +89,12 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+          # readOnlyRootFilesystem: true — Node/Nest/Prisma's "library" query
+          # engine don't need to write anywhere under normal operation, but
+          # Node itself expects a writable os.tmpdir(). Mount just that.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

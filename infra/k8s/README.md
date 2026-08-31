@@ -53,6 +53,9 @@ manifest set; if one is added later (GKE), it must explicitly exclude
 
 ```sh
 # 1. Build and load the image (see apps/server/Dockerfile for why context = repo root)
+#    prisma/schema.prisma's binaryTargets cover both arm64 and x64 musl, so
+#    this works whether you're building on Apple Silicon (this repo's local
+#    validation) or an x64 CI/dev machine — no target flags needed either way.
 docker build -f apps/server/Dockerfile -t chat-crdt-server:local .
 kind create cluster --name chat-crdt   # skip if a cluster already exists
 kind load docker-image chat-crdt-server:local --name chat-crdt
@@ -94,8 +97,28 @@ kind delete cluster --name chat-crdt
 ## Cardinality caveat
 
 `yjs_state_bytes` is labeled by `roomId` — one series per room currently
-loaded in a pod's memory (rooms are evicted ~30s after the last client
-leaves, see `ROOM_GC_DELAY_MS` in `sync.gateway.ts`), not per room ever
-created. Fine at MVP scale; if room count grows into the thousands this
-should become a histogram of state sizes instead of a per-room gauge (see
+loaded in a pod's memory. SyncGateway calls `removeYjsStateBytes(roomId)`
+in the same block that GC's a room from memory (~30s after the last client
+leaves, see `ROOM_GC_DELAY_MS` in `sync.gateway.ts`), so this is genuinely
+bounded by *currently loaded* rooms, not every room ever created. Fine at
+MVP scale; if room count grows into the thousands this should become a
+histogram of state sizes instead of a per-room gauge (see
 `apps/server/src/metrics/metrics.service.ts`).
+
+## Operational notes
+
+- **Editing `prometheus-config.yaml` requires a restart, not just
+  `kubectl apply`.** There's no `configmap-reload` sidecar or
+  `--web.enable-lifecycle` wired up, so Prometheus only reads
+  `prometheus.yml`/`rules.yml` at process start. After changing scrape
+  config or alert rules: `kubectl -n chat-crdt rollout restart
+  deploy/prometheus`.
+- **Rolling updates drop in-flight WebSocket connections on the pod being
+  replaced.** `base/deployment.yaml` sets `maxUnavailable: 0` (so the
+  Service never has fewer than `replicas` ready pods) and a 30s
+  `terminationGracePeriodSeconds` (so an outgoing pod's disconnect path —
+  awareness cleanup, final persist — gets a chance to run instead of being
+  SIGKILLed), but neither prevents the *specific* clients connected to that
+  one pod from being disconnected when it terminates. That's expected —
+  reconnection is the client's job (see `packages/sync-engine`) — not a bug
+  to fix here.

@@ -46,12 +46,14 @@ describe('MetricsService', () => {
     expect(text).toContain('messages_total{type="awareness"} 1');
   });
 
-  it('increments fanout_bytes_total by the given byte count', async () => {
-    metrics.incFanoutBytes(120);
-    metrics.incFanoutBytes(30);
+  it('increments fanout_bytes_total by the given byte count, labeled by channel', async () => {
+    metrics.incFanoutBytes(120, 'doc');
+    metrics.incFanoutBytes(30, 'doc');
+    metrics.incFanoutBytes(10, 'awareness');
 
     const text = await metrics.getMetricsText();
-    expect(text).toContain('fanout_bytes_total 150');
+    expect(text).toContain('fanout_bytes_total{channel="doc"} 150');
+    expect(text).toContain('fanout_bytes_total{channel="awareness"} 10');
   });
 
   it('records persist_duration_seconds observations', async () => {
@@ -70,5 +72,13 @@ describe('MetricsService', () => {
 
   it('reports the prom-client content type for the /metrics response header', () => {
     expect(metrics.getContentType()).toContain('text/plain');
+  });
+
+  it('removes a room\'s yjs_state_bytes series so GC\'d rooms stop reporting', async () => {
+    metrics.setYjsStateBytes('room-a', 512_000);
+    metrics.removeYjsStateBytes('room-a');
+
+    const text = await metrics.getMetricsText();
+    expect(text).not.toContain('roomId="room-a"');
   });
 });

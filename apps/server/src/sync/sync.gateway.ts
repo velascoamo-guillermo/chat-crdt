@@ -192,11 +192,16 @@ export class SyncGateway
     if (!roomId) return;
     this.clientRoom.delete(client);
 
+    // Decrement here, before the room-lookup miss-return below: incWsConnections
+    // was called unconditionally in handleConnection whenever clientRoom got an
+    // entry for this client, so the connection is going away either way — even
+    // if the room itself was already GC'd out from under it.
+    this.metrics.decWsConnections();
+
     const room = this.rooms.get(roomId);
     if (!room) return;
 
     room.clients.delete(client);
-    this.metrics.decWsConnections();
 
     // Clear this socket's awareness states so it doesn't linger as a ghost
     // online user / stuck typing indicator. The awareness 'update' handler
@@ -225,6 +230,7 @@ export class SyncGateway
           this.rooms.delete(roomId);
           this.roomInitMap.delete(roomId);
           this.metrics.decRoomsLoaded();
+          this.metrics.removeYjsStateBytes(roomId);
         }
       }, ROOM_GC_DELAY_MS);
     }
@@ -303,8 +309,11 @@ export class SyncGateway
     if (!p) {
       const room = new RoomState(roomId);
       this.rooms.set(roomId, room);
-      this.metrics.incRoomsLoaded();
+      // Incremented only once loadRoomState actually succeeds — incrementing
+      // eagerly here would leak the gauge upward on a load failure (Prisma
+      // error etc.) with nothing to balance it back down.
       p = this.loadRoomState(room).then(() => {
+        this.metrics.incRoomsLoaded();
         this.registerRoomUpdateHandler(room);
         this.registerRoomAwarenessHandler(room);
         return room;
@@ -339,7 +348,7 @@ export class SyncGateway
         update: Buffer.from(update).toString('base64'),
       };
       this.pub.publish(`${UPDATE_CHANNEL_PREFIX}${room.roomId}`, JSON.stringify(payload));
-      this.metrics.incFanoutBytes(update.byteLength);
+      this.metrics.incFanoutBytes(update.byteLength, 'doc');
       this.schedulePersist(room);
     });
   }
@@ -388,6 +397,7 @@ export class SyncGateway
           update: Buffer.from(update).toString('base64'),
         };
         this.pub.publish(`${AWARENESS_CHANNEL_PREFIX}${room.roomId}`, JSON.stringify(payload));
+        this.metrics.incFanoutBytes(update.byteLength, 'awareness');
       },
     );
   }

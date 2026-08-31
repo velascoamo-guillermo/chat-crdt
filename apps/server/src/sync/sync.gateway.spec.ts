@@ -9,6 +9,7 @@ import * as Y from 'yjs';
 import { RoomState } from './room-state';
 import * as encoding from 'lib0/encoding';
 import * as syncProtocol from 'y-protocols/sync';
+import * as awarenessProtocol from 'y-protocols/awareness';
 
 function metricsMock() {
   return {
@@ -20,6 +21,7 @@ function metricsMock() {
     incFanoutBytes: jest.fn(),
     observePersistDurationSeconds: jest.fn(),
     setYjsStateBytes: jest.fn(),
+    removeYjsStateBytes: jest.fn(),
   };
 }
 
@@ -342,7 +344,28 @@ describe('SyncGateway', () => {
       expect(metrics.incMessages).toHaveBeenCalledWith('sync');
     });
 
-    it('records fanout_bytes_total when a doc update is published to Redis', () => {
+    it('increments messages_total labeled "awareness" on an awareness message', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+
+      const client = new FakeSocket();
+      await gateway.handleConnection(client as any, fakeReq({ room: 'default', token: 'ok' }));
+      metrics.incMessages.mockClear();
+
+      const room = (gateway as any).rooms.get('default') as RoomState;
+      const enc = encoding.createEncoder();
+      encoding.writeVarUint(enc, 1); // MSG_AWARENESS
+      encoding.writeVarUint8Array(
+        enc,
+        awarenessProtocol.encodeAwarenessUpdate(room.awareness, [room.awareness.clientID]),
+      );
+      const data = Buffer.from(encoding.toUint8Array(enc));
+
+      (gateway as any).handleMessage(client, room, data);
+
+      expect(metrics.incMessages).toHaveBeenCalledWith('awareness');
+    });
+
+    it('records fanout_bytes_total, labeled "doc", when a doc update is published to Redis', () => {
       const room = new RoomState('default');
       (gateway as any).rooms.set('default', room);
       (gateway as any).registerRoomUpdateHandler(room);
@@ -352,7 +375,31 @@ describe('SyncGateway', () => {
       });
 
       expect(metrics.incFanoutBytes).toHaveBeenCalledTimes(1);
-      expect(metrics.incFanoutBytes).toHaveBeenCalledWith(expect.any(Number));
+      expect(metrics.incFanoutBytes).toHaveBeenCalledWith(expect.any(Number), 'doc');
+    });
+
+    it('records fanout_bytes_total, labeled "awareness", when an awareness update is published to Redis', () => {
+      const room = new RoomState('default');
+      (gateway as any).rooms.set('default', room);
+      (gateway as any).registerRoomAwarenessHandler(room);
+
+      room.awareness.setLocalState({ user: 'someone' });
+
+      expect(metrics.incFanoutBytes).toHaveBeenCalledWith(expect.any(Number), 'awareness');
+    });
+
+    it('does not increment fanout_bytes_total for a doc update that arrived from Redis', () => {
+      const room = new RoomState('default');
+      (gateway as any).rooms.set('default', room);
+      (gateway as any).registerRoomUpdateHandler(room);
+
+      const source = new Y.Doc();
+      source.getArray('messages').push([{ id: 'm2', content: 'from other instance' }]);
+      const delta = Y.encodeStateAsUpdate(source);
+
+      Y.applyUpdate(room.doc, delta, 'redis');
+
+      expect(metrics.incFanoutBytes).not.toHaveBeenCalled();
     });
 
     it('observes persist_duration_seconds and sets yjs_state_bytes on persist', async () => {
@@ -366,7 +413,7 @@ describe('SyncGateway', () => {
       expect(metrics.setYjsStateBytes).toHaveBeenCalledWith('default', expect.any(Number));
     });
 
-    it('decrements rooms_loaded when an empty room is garbage collected', () => {
+    it('decrements rooms_loaded and removes the yjs_state_bytes series when an empty room is garbage collected', () => {
       jest.useFakeTimers();
 
       const room = new RoomState('default');
@@ -379,8 +426,21 @@ describe('SyncGateway', () => {
       jest.advanceTimersByTime(30_000);
 
       expect(metrics.decRoomsLoaded).toHaveBeenCalledTimes(1);
+      expect(metrics.removeYjsStateBytes).toHaveBeenCalledWith('default');
 
       jest.useRealTimers();
+    });
+
+    it('decrements ws_connections even if the room was already garbage collected out from under the socket', () => {
+      const client = new FakeSocket();
+      (gateway as any).clientRoom.set(client, 'a-room-that-is-gone');
+      // Deliberately no entry in `rooms` for 'a-room-that-is-gone' — simulates
+      // the room having been GC'd between this client's last activity and
+      // its disconnect event.
+
+      gateway.handleDisconnect(client as any);
+
+      expect(metrics.decWsConnections).toHaveBeenCalledTimes(1);
     });
   });
 });

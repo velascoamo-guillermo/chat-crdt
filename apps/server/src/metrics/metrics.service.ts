@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics } from 'prom-client';
 
 export type MessageType = 'sync' | 'awareness';
+export type FanoutChannel = 'doc' | 'awareness';
 
 /**
  * Prometheus metrics for the sync server, scraped cluster-internally at
@@ -10,11 +11,13 @@ export type MessageType = 'sync' | 'awareness';
  *
  * Cardinality caveat: `yjs_state_bytes` is labeled by `roomId`. That is
  * bounded-but-unbounded — one series per *currently loaded* room on this
- * instance, not per room ever created (rooms are GC'd from memory
- * ROOM_GC_DELAY_MS after the last client leaves, see SyncGateway). Acceptable
- * at MVP scale (tens–hundreds of concurrent rooms); if the room count grows
- * into the thousands this should move to a histogram of state sizes instead
- * of a per-room gauge.
+ * instance, not per room ever created. SyncGateway calls
+ * `removeYjsStateBytes(roomId)` in the same block that GC's a room from
+ * memory (ROOM_GC_DELAY_MS after the last client leaves), so the series set
+ * tracks `rooms_loaded` 1:1 rather than growing forever. Acceptable at MVP
+ * scale (tens–hundreds of concurrent rooms); if the room count grows into
+ * the thousands this should move to a histogram of state sizes instead of a
+ * per-room gauge.
  */
 @Injectable()
 export class MetricsService {
@@ -41,7 +44,8 @@ export class MetricsService {
 
   private readonly fanoutBytesTotal = new Counter({
     name: 'fanout_bytes_total',
-    help: 'Total bytes published to Redis for cross-instance fan-out',
+    help: 'Total bytes published to Redis for cross-instance fan-out, by channel',
+    labelNames: ['channel'] as const,
     registers: [this.registry],
   });
 
@@ -85,8 +89,8 @@ export class MetricsService {
     this.messagesTotal.inc({ type });
   }
 
-  incFanoutBytes(bytes: number): void {
-    this.fanoutBytesTotal.inc(bytes);
+  incFanoutBytes(bytes: number, channel: FanoutChannel): void {
+    this.fanoutBytesTotal.inc({ channel }, bytes);
   }
 
   observePersistDurationSeconds(seconds: number): void {
@@ -95,6 +99,11 @@ export class MetricsService {
 
   setYjsStateBytes(roomId: string, bytes: number): void {
     this.yjsStateBytes.set({ roomId }, bytes);
+  }
+
+  /** Drop the per-room series when a room is GC'd — see class-level cardinality caveat. */
+  removeYjsStateBytes(roomId: string): void {
+    this.yjsStateBytes.remove({ roomId });
   }
 
   getMetricsText(): Promise<string> {

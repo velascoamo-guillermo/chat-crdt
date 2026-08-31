@@ -52,13 +52,20 @@ RUN apk add --no-cache openssl
 # would prune this (e.g. `bun install --production` in a workspace-focused
 # copy, or a pnpm/npm workspace with `--prod --filter`). Out of scope here
 # per the ticket (actual GKE deploy is out of scope).
-COPY --from=builder /repo/node_modules ./node_modules
-COPY --from=builder /repo/packages/shared/dist ./packages/shared/dist
-COPY --from=builder /repo/packages/shared/package.json ./packages/shared/package.json
-COPY --from=builder /repo/apps/server/dist ./apps/server/dist
-COPY --from=builder /repo/apps/server/package.json ./apps/server/package.json
-COPY --from=builder /repo/apps/server/prisma ./apps/server/prisma
+#
+# --chown=node:node on every copy (rather than one RUN chown -R at the end)
+# so the ~780MB node_modules layer isn't rewalked a second time just to fix
+# ownership — node:20-alpine ships a non-root `node` user (uid 1000) out of
+# the box, which is what the runtime actually runs as (see USER below) and
+# what infra/k8s/base/deployment.yaml's securityContext expects (runAsUser: 1000).
+COPY --from=builder --chown=node:node /repo/node_modules ./node_modules
+COPY --from=builder --chown=node:node /repo/packages/shared/dist ./packages/shared/dist
+COPY --from=builder --chown=node:node /repo/packages/shared/package.json ./packages/shared/package.json
+COPY --from=builder --chown=node:node /repo/apps/server/dist ./apps/server/dist
+COPY --from=builder --chown=node:node /repo/apps/server/package.json ./apps/server/package.json
+COPY --from=builder --chown=node:node /repo/apps/server/prisma ./apps/server/prisma
 
 WORKDIR /app/apps/server
+USER node
 EXPOSE 3001
 CMD ["node", "dist/main"]

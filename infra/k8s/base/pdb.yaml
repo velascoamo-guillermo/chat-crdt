@@ -1,0 +1,12 @@
+# Optional per ticket, included since it's cheap: keeps at least 1 replica up
+# during voluntary disruptions (node drain, rollout) — relevant once replicas
+# are actually serving live WS connections, not just for the 2-replica demo.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: server
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: chat-crdt-server

@@ -1,6 +1,15 @@
 // Prisma v5 — pinned at ^5; v6+ requires prisma.config.ts and has breaking CLI changes
 generator client {
   provider = "prisma-client-js"
+  // "native" covers local dev. The Docker image (infra/k8s Dockerfile builds
+  // on oven/bun:*-alpine, runs on node:20-alpine) needs its own targets
+  // because builder and runtime Alpine bases disagree on OpenSSL major
+  // version — both arm64 (this machine, used for the local kind validation
+  // in this ticket) and x64 (Prisma's musl target naming only suffixes the
+  // architecture for arm; x64 is just "linux-musl-openssl-*") are listed so
+  // the same committed Dockerfile also produces a working image for anyone
+  // building on/for an x64 host, e.g. CI or a future GKE node pool.
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x", "linux-musl-arm64-openssl-1.1.x", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {

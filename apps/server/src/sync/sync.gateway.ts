@@ -18,6 +18,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomState } from './room-state';
+import { MetricsService } from '../metrics/metrics.service';
 import { randomUUID } from 'crypto';
 
 const MSG_SYNC = 0;
@@ -72,6 +73,7 @@ export class SyncGateway
     private readonly roomsService: RoomsService,
     @Inject('REDIS_PUB') private readonly pub: Redis,
     @Inject('REDIS_SUB') private readonly sub: Redis,
+    private readonly metrics: MetricsService,
   ) {}
 
   onModuleInit() {
@@ -147,6 +149,7 @@ export class SyncGateway
 
     room.clients.add(client);
     this.clientRoom.set(client, roomId);
+    this.metrics.incWsConnections();
 
     // Heartbeat liveness: alive on connect, re-armed on every pong.
     this.alive.set(client, true);
@@ -189,6 +192,12 @@ export class SyncGateway
     if (!roomId) return;
     this.clientRoom.delete(client);
 
+    // Decrement here, before the room-lookup miss-return below: incWsConnections
+    // was called unconditionally in handleConnection whenever clientRoom got an
+    // entry for this client, so the connection is going away either way — even
+    // if the room itself was already GC'd out from under it.
+    this.metrics.decWsConnections();
+
     const room = this.rooms.get(roomId);
     if (!room) return;
 
@@ -220,6 +229,8 @@ export class SyncGateway
           room.destroy();
           this.rooms.delete(roomId);
           this.roomInitMap.delete(roomId);
+          this.metrics.decRoomsLoaded();
+          this.metrics.removeYjsStateBytes(roomId);
         }
       }, ROOM_GC_DELAY_MS);
     }
@@ -241,6 +252,7 @@ export class SyncGateway
       const msgType = decoding.readVarUint(decoder);
 
       if (msgType === MSG_SYNC) {
+        this.metrics.incMessages('sync');
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MSG_SYNC);
         // readSyncMessage applies the client's update to room.doc with `client`
@@ -252,6 +264,7 @@ export class SyncGateway
           client.send(encoding.toUint8Array(encoder));
         }
       } else if (msgType === MSG_AWARENESS) {
+        this.metrics.incMessages('awareness');
         // Apply with `client` as origin; the awareness 'update' handler tracks
         // the client's IDs, fans out to local clients and publishes to Redis.
         const update = decoding.readVarUint8Array(decoder);
@@ -296,7 +309,11 @@ export class SyncGateway
     if (!p) {
       const room = new RoomState(roomId);
       this.rooms.set(roomId, room);
+      // Incremented only once loadRoomState actually succeeds — incrementing
+      // eagerly here would leak the gauge upward on a load failure (Prisma
+      // error etc.) with nothing to balance it back down.
       p = this.loadRoomState(room).then(() => {
+        this.metrics.incRoomsLoaded();
         this.registerRoomUpdateHandler(room);
         this.registerRoomAwarenessHandler(room);
         return room;
@@ -331,6 +348,7 @@ export class SyncGateway
         update: Buffer.from(update).toString('base64'),
       };
       this.pub.publish(`${UPDATE_CHANNEL_PREFIX}${room.roomId}`, JSON.stringify(payload));
+      this.metrics.incFanoutBytes(update.byteLength, 'doc');
       this.schedulePersist(room);
     });
   }
@@ -379,6 +397,7 @@ export class SyncGateway
           update: Buffer.from(update).toString('base64'),
         };
         this.pub.publish(`${AWARENESS_CHANNEL_PREFIX}${room.roomId}`, JSON.stringify(payload));
+        this.metrics.incFanoutBytes(update.byteLength, 'awareness');
       },
     );
   }
@@ -409,12 +428,15 @@ export class SyncGateway
   }
 
   private async persistRoomState(room: RoomState): Promise<void> {
+    const start = process.hrtime.bigint();
     const state = Y.encodeStateAsUpdate(room.doc);
     this.warnIfStateLarge(room.roomId, state.byteLength);
+    this.metrics.setYjsStateBytes(room.roomId, state.byteLength);
     await this.prisma.room.update({
       where: { name: room.roomId },
       data: { yjsState: Buffer.from(state) },
     });
+    this.metrics.observePersistDurationSeconds(Number(process.hrtime.bigint() - start) / 1e9);
   }
 
   /** Trip the ADR-009 retention trigger: warn once per persist past the cap. */

@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    scrape_configs:
+      # Pod-level discovery (not Service-level) so both server replicas get
+      # scraped independently — a Service-DNS target would only ever reach
+      # one pod per scrape via kube-proxy round-robin.
+      - job_name: chat-crdt-server
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [chat-crdt]
+        relabel_configs:
+          # Only scrape pods that opted in via the annotation set on
+          # infra/k8s/base/deployment.yaml's pod template.
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+
+  rules.yml: |
+    groups:
+      - name: chat-crdt.rules
+        rules:
+          # ADR-009: yjsState crossing 1MB is the signal to consider epoch
+          # compaction. This expresses that gauge threshold as a real alert
+          # rule (ticket #19 acceptance item) — it does not fire compaction
+          # itself, epoch compaction is still deferred per the ADR.
+          - alert: YjsStateApproachingCompactionThreshold
+            expr: yjs_state_bytes >= 1000000
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Room {{ $labels.roomId }} yjsState >= 1MB"
+              description: >-
+                ADR-009 compaction trigger crossed for room {{ $labels.roomId }}
+                on pod {{ $labels.pod }}. Consider epoch compaction
+                (docs/adr/009-yjsstate-retention.md).

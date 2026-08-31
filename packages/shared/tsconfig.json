@@ -4,7 +4,12 @@
     "outDir": "dist",
     "rootDir": "src",
     "module": "Node16",
-    "moduleResolution": "node16"
+    "moduleResolution": "node16",
+    // Published tarball ships "dist" only (no "src") — inline sources so
+    // .js.map stays self-contained instead of pointing at an excluded file;
+    // declaration maps have no inlineSources equivalent, so drop them.
+    "inlineSources": true,
+    "declarationMap": false
   },
   "include": ["src"],
   "exclude": ["dist", "node_modules"]

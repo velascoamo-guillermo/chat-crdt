@@ -1,23 +1,46 @@
 {
   "name": "@chat-crdt/sync-engine",
-  "version": "0.0.1",
+  "version": "0.1.0",
+  "description": "CRDT (Yjs) sync engine for chat-crdt — offline-first document sync, WebSocket provider, and pluggable persistence.",
+  "keywords": [
+    "crdt",
+    "yjs",
+    "sync",
+    "realtime",
+    "chat",
+    "offline-first",
+    "websocket"
+  ],
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/velascoamo-guillermo/chat-crdt.git",
+    "directory": "packages/sync-engine"
+  },
   "sideEffects": false,
+  "type": "commonjs",
   "main": "./dist/index.js",
+  "module": "./dist/esm/index.js",
   "types": "./dist/index.d.ts",
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
-      "default": "./dist/index.js"
-    }
+      "import": {
+        "types": "./dist/esm/index.d.mts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsc",
-    "test": "bun test",
+    "build": "tsc && tsc -p tsconfig.esm.json && node scripts/postbuild-esm.mjs",
+    "test": "bun test && node scripts/smoke-test.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
@@ -25,7 +48,7 @@
     "ulid": "^2.3.0",
     "y-protocols": "^1.0.6",
     "lib0": "^0.2.109",
-    "@chat-crdt/shared": "workspace:*"
+    "@chat-crdt/shared": "^0.1.0"
   },
   "peerDependencies": {
     "yjs": "^13.6.0"

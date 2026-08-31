@@ -1,11 +1,13 @@
 import { memo } from 'react';
-import { Host, Text, darkTheme as theme } from '../ui';
+import { Host, Text, useUITheme } from '../ui';
 
 interface Props {
   typingUsers: string[];
 }
 
 export const TypingIndicator = memo(function TypingIndicator({ typingUsers }: Props) {
+  const t = useUITheme();
+
   if (typingUsers.length === 0) return null;
 
   const label =
@@ -16,7 +18,7 @@ export const TypingIndicator = memo(function TypingIndicator({ typingUsers }: Pr
   return (
     <Host matchContents={{ vertical: true }} style={{ backgroundColor: 'transparent' }}>
       <Text
-        textStyle={{ fontSize: 12, color: theme.textSecondary }}
+        textStyle={{ fontSize: 12, color: t.textSecondary }}
         style={{ paddingHorizontal: 16, paddingVertical: 4 }}
       >
         {label}

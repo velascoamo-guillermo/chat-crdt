@@ -17,6 +17,7 @@ coverage/
 
 # Internal AI planning docs
 docs/superpowers/
+.superpowers/
 
 # Local dev tooling (personal, machine-specific)
 .mcp.json

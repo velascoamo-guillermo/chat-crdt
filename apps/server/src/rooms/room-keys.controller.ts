@@ -22,6 +22,14 @@ export class RoomKeysController {
     return this.keys.getPending(roomId, req.user.userId);
   }
 
+  // Recipient public keys for every current member — needed by the
+  // enabling/rotating admin to wrap a brand-new epoch's key, since
+  // GET .../keys/pending is empty before that epoch exists.
+  @Get('members')
+  members(@Param('id') roomId: string, @Request() req: { user: { userId: string } }) {
+    return this.keys.getMembersWithPublicKeys(roomId, req.user.userId);
+  }
+
   // Serves pending grants (first-responder wrap, any member) when no
   // claimEpoch is present, or atomically claims an epoch (enablement /
   // rotation, admin-only) when it is.

@@ -8,6 +8,11 @@ export interface PendingGrant {
   publicKey: string;
 }
 
+export interface MemberPublicKey {
+  userId: string;
+  publicKey: string;
+}
+
 export interface RoomKeyGrantView {
   roomId: string;
   userId: string;
@@ -59,6 +64,26 @@ export class RoomKeysService {
       }
     }
     return pending;
+  }
+
+  /**
+   * Necessary for enablement (0->1): GET .../keys/pending is empty while
+   * currentKeyId is 0 (there's no reached epoch yet to be missing a grant
+   * for), so it can't supply the recipient public keys an admin needs to
+   * wrap a brand-new room key for every current member. Not one of the
+   * three endpoints ADR-010's Consequences section explicitly counts —
+   * filled implementation gap, flagged in the PR body.
+   */
+  async getMembersWithPublicKeys(roomId: string, requesterId: string): Promise<MemberPublicKey[]> {
+    await this.assertMember(roomId, requesterId);
+
+    const members = await this.prisma.roomMember.findMany({ where: { roomId }, include: { user: true } });
+    const result: MemberPublicKey[] = [];
+    for (const member of members) {
+      const { user } = member as unknown as { user: { id: string; publicKey: string | null } };
+      if (user.publicKey) result.push({ userId: member.userId, publicKey: user.publicKey });
+    }
+    return result;
   }
 
   async getMyGrants(roomId: string, requesterId: string): Promise<RoomKeyGrantView[]> {

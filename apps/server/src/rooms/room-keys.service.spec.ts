@@ -178,6 +178,32 @@ describe('RoomKeysService', () => {
     });
   });
 
+  describe('getMembersWithPublicKeys', () => {
+    // Necessary for enablement (0->1): before any epoch exists, the admin
+    // wrapping a brand-new room key needs every current member's published
+    // publicKey to seal it for them — GET .../keys/pending is empty at
+    // currentKeyId 0 (there is no "reached epoch" yet to be missing a grant
+    // for), so it cannot serve this. Not explicitly named as its own
+    // endpoint in ADR-010's Consequences count (3 endpoints) — flagged as a
+    // filled implementation gap in the PR body.
+    it('throws ForbiddenException when the requester is not a member', async () => {
+      mockPrisma.roomMember.findUnique.mockResolvedValue(null);
+      await expect(service.getMembersWithPublicKeys('room-1', 'outsider')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('returns userId/publicKey only for members who have published a key', async () => {
+      mockPrisma.roomMember.findUnique.mockResolvedValue({ roomId: 'room-1', userId: 'user-1', role: 'admin' });
+      mockPrisma.roomMember.findMany.mockResolvedValue([
+        { roomId: 'room-1', userId: 'user-1', role: 'admin', user: { id: 'user-1', publicKey: 'pk1', publicKeyFp: 'fp1' } },
+        { roomId: 'room-1', userId: 'user-2', role: 'member', user: { id: 'user-2', publicKey: null, publicKeyFp: null } },
+      ]);
+
+      const result = await service.getMembersWithPublicKeys('room-1', 'user-1');
+
+      expect(result).toEqual([{ userId: 'user-1', publicKey: 'pk1' }]);
+    });
+  });
+
   describe('getMyGrants', () => {
     it('returns only the requesting user\'s own grant rows for the room', async () => {
       mockPrisma.roomMember.findUnique.mockResolvedValue({ roomId: 'room-1', userId: 'user-1', role: 'member' });

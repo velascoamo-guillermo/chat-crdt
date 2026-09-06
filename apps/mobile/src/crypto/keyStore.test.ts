@@ -10,6 +10,9 @@ function makeMemoryBackend(): SecureKeyValueStore {
     async setItem(key, value) {
       map.set(key, value);
     },
+    async removeItem(key) {
+      map.delete(key);
+    },
   };
 }
 
@@ -53,5 +56,17 @@ describe('RoomKeyStore', () => {
 
   it('returns null current epoch for a room with no cached keys', async () => {
     expect(await store.getCachedCurrentEpoch('unknown-room')).toBeNull();
+  });
+
+  // Code review round 1, minor: "keyStore clear API" — recovery path for a
+  // device stuck with a locally-generated-but-never-published identity.
+  it('clearIdentity removes the stored identity, leaving cached room keys untouched', async () => {
+    await store.setIdentity({ publicKey: 'pub', privateKey: 'priv' });
+    await store.cacheRoomKey('room-1', 1, 'key-1');
+
+    await store.clearIdentity();
+
+    expect(await store.getIdentity()).toBeNull();
+    expect(await store.getRoomKey('room-1', 1)).toBe('key-1');
   });
 });

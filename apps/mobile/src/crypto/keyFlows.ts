@@ -18,7 +18,8 @@ async function authFetch<T>(ctx: KeyFlowsContext, path: string, init?: RequestIn
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}`, ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
-    const body: ErrorBody = await res.json().catch(() => ({}));
+    const parsed: unknown = await res.json().catch(() => ({}));
+    const body: ErrorBody = parsed && typeof parsed === 'object' ? (parsed as ErrorBody) : {};
     const message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
     throw new Error(message ?? `E2EE request failed: ${res.status}`);
   }
@@ -32,17 +33,27 @@ async function authFetch<T>(ctx: KeyFlowsContext, path: string, init?: RequestIn
  * publish for anyone new; republish-on-reinstall reuses the same call once
  * the local keypair is known to be gone (see PUT /users/me/public-key
  * deleting stale grants server-side).
+ *
+ * Publish-then-persist, deliberately in that order (code review round 1,
+ * Important #5): persisting the keypair locally BEFORE the PUT succeeded
+ * would make this function's own early-return (`if (existing) return`)
+ * permanently skip retrying — a keypair that exists locally but was never
+ * actually published (e.g. the PUT failed the very first time this ran) is
+ * a stuck state with no recovery path, since nothing else ever calls this
+ * again with a fresh keypair once `existing` is non-null. Persisting only
+ * after a successful PUT means a failed attempt leaves no local trace, so
+ * the next call starts clean and actually retries.
  */
 export async function ensureIdentityPublished(ctx: KeyFlowsContext, keyStore: RoomKeyStore): Promise<void> {
   const existing = await keyStore.getIdentity();
   if (existing) return;
 
   const kp = sodium.crypto_box_keypair('base64');
-  await keyStore.setIdentity({ publicKey: kp.publicKey, privateKey: kp.privateKey });
   await authFetch(ctx, '/users/me/public-key', {
     method: 'PUT',
     body: JSON.stringify({ publicKey: kp.publicKey }),
   });
+  await keyStore.setIdentity({ publicKey: kp.publicKey, privateKey: kp.privateKey });
 }
 
 interface PendingGrantDto {
@@ -109,15 +120,25 @@ export async function fetchAndLoadMyGrants(
   const publicKey = sodium.from_base64(identity.publicKey);
 
   for (const grant of myGrants) {
-    const cached = await keyStore.getRoomKey(roomId, grant.keyId);
-    if (cached) {
-      cipher.setKey(grant.keyId, sodium.from_base64(cached));
+    // Per-grant isolation (code review round 1, Important #4): one bad row
+    // (corrupted wrappedKey, a grant sealed to a since-rotated identity that
+    // slipped past the fp check, etc.) must not throw out of the loop and
+    // cost every OTHER epoch this device is otherwise perfectly able to
+    // unwrap — that would turn a single-epoch problem into "this member
+    // can't decrypt this room at all".
+    try {
+      const cached = await keyStore.getRoomKey(roomId, grant.keyId);
+      if (cached) {
+        cipher.setKey(grant.keyId, sodium.from_base64(cached));
+        continue;
+      }
+      const wrapped = sodium.from_base64(grant.wrappedKey);
+      const keyBytes = sodium.crypto_box_seal_open(wrapped, publicKey, privateKey);
+      await keyStore.cacheRoomKey(roomId, grant.keyId, sodium.to_base64(keyBytes));
+      cipher.setKey(grant.keyId, keyBytes);
+    } catch {
       continue;
     }
-    const wrapped = sodium.from_base64(grant.wrappedKey);
-    const keyBytes = sodium.crypto_box_seal_open(wrapped, publicKey, privateKey);
-    await keyStore.cacheRoomKey(roomId, grant.keyId, sodium.to_base64(keyBytes));
-    cipher.setKey(grant.keyId, keyBytes);
   }
 }
 

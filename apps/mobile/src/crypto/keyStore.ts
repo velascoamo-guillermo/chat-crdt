@@ -7,6 +7,7 @@
 export interface SecureKeyValueStore {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
+  removeItem(key: string): Promise<void>;
 }
 
 export interface IdentityKeyPair {
@@ -41,6 +42,21 @@ export class RoomKeyStore {
 
   async setIdentity(identity: IdentityKeyPair): Promise<void> {
     await this.backend.setItem(IDENTITY_STORAGE_KEY, JSON.stringify(identity));
+  }
+
+  /**
+   * Clears the local identity keypair (code review round 1, minor: a
+   * "keyStore clear API"). Useful both on logout (this device's identity
+   * shouldn't outlive the session it was published under) and as manual
+   * recovery for a device stuck in a locally-generated-but-never-published
+   * state (e.g. every prior publish attempt failed offline before Important
+   * #5's publish-then-persist fix landed) — clearing it makes the next
+   * ensureIdentityPublished() start clean instead of requiring a reinstall.
+   * Does NOT touch cached room keys — those remain valid independent of
+   * whether this device's identity gets replaced.
+   */
+  async clearIdentity(): Promise<void> {
+    await this.backend.removeItem(IDENTITY_STORAGE_KEY);
   }
 
   async cacheRoomKey(roomId: string, keyId: number, keyBase64: string): Promise<void> {

@@ -11,4 +11,5 @@ import type { SecureKeyValueStore } from './keyStore';
 export const secureStoreBackend: SecureKeyValueStore = {
   getItem: (key) => SecureStore.getItemAsync(key),
   setItem: (key, value) => SecureStore.setItemAsync(key, value),
+  removeItem: (key) => SecureStore.deleteItemAsync(key),
 };

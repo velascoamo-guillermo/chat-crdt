@@ -3,9 +3,27 @@ import { JwtService } from '@nestjs/jwt';
 import { SyncGateway } from './sync.gateway';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoomsService } from '../rooms/rooms.service';
+import { MetricsService } from '../metrics/metrics.service';
 import { FakeSocket, fakeReq, redisMock } from './__test__/fakes';
 import * as Y from 'yjs';
 import { RoomState } from './room-state';
+import * as encoding from 'lib0/encoding';
+import * as syncProtocol from 'y-protocols/sync';
+import * as awarenessProtocol from 'y-protocols/awareness';
+
+function metricsMock() {
+  return {
+    incWsConnections: jest.fn(),
+    decWsConnections: jest.fn(),
+    incRoomsLoaded: jest.fn(),
+    decRoomsLoaded: jest.fn(),
+    incMessages: jest.fn(),
+    incFanoutBytes: jest.fn(),
+    observePersistDurationSeconds: jest.fn(),
+    setYjsStateBytes: jest.fn(),
+    removeYjsStateBytes: jest.fn(),
+  };
+}
 
 describe('SyncGateway', () => {
   let gateway: SyncGateway;
@@ -14,6 +32,7 @@ describe('SyncGateway', () => {
   let prisma: { room: { findUnique: jest.Mock; upsert: jest.Mock; update: jest.Mock } };
   let pub: ReturnType<typeof redisMock>;
   let sub: ReturnType<typeof redisMock>;
+  let metrics: ReturnType<typeof metricsMock>;
 
   beforeEach(async () => {
     jwt = { verify: jest.fn() };
@@ -27,6 +46,7 @@ describe('SyncGateway', () => {
     };
     pub = redisMock();
     sub = redisMock();
+    metrics = metricsMock();
 
     const module = await Test.createTestingModule({
       providers: [
@@ -36,6 +56,7 @@ describe('SyncGateway', () => {
         { provide: RoomsService, useValue: rooms },
         { provide: 'REDIS_PUB', useValue: pub },
         { provide: 'REDIS_SUB', useValue: sub },
+        { provide: MetricsService, useValue: metrics },
       ],
     }).compile();
 
@@ -280,6 +301,146 @@ describe('SyncGateway', () => {
     it('constructs the room doc with garbage collection enabled', () => {
       const room = new RoomState('default');
       expect(room.doc.gc).toBe(true);
+    });
+  });
+
+  describe('metrics emission', () => {
+    it('increments ws_connections on connect and decrements on disconnect', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+
+      const client = new FakeSocket();
+      await gateway.handleConnection(client as any, fakeReq({ room: 'default', token: 'ok' }));
+      expect(metrics.incWsConnections).toHaveBeenCalledTimes(1);
+
+      gateway.handleDisconnect(client as any);
+      expect(metrics.decWsConnections).toHaveBeenCalledTimes(1);
+    });
+
+    it('increments rooms_loaded when a room is first created', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+      rooms.isMember.mockResolvedValue(true);
+
+      const client = new FakeSocket();
+      await gateway.handleConnection(client as any, fakeReq({ room: 'fresh-room', token: 'ok' }));
+
+      expect(metrics.incRoomsLoaded).toHaveBeenCalledTimes(1);
+    });
+
+    it('increments messages_total labeled "sync" on a sync message', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+
+      const client = new FakeSocket();
+      await gateway.handleConnection(client as any, fakeReq({ room: 'default', token: 'ok' }));
+      metrics.incMessages.mockClear();
+
+      const room = (gateway as any).rooms.get('default') as RoomState;
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, 0); // MSG_SYNC
+      syncProtocol.writeSyncStep1(encoder, room.doc);
+      const data = Buffer.from(encoding.toUint8Array(encoder));
+
+      (gateway as any).handleMessage(client, room, data);
+
+      expect(metrics.incMessages).toHaveBeenCalledWith('sync');
+    });
+
+    it('increments messages_total labeled "awareness" on an awareness message', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+
+      const client = new FakeSocket();
+      await gateway.handleConnection(client as any, fakeReq({ room: 'default', token: 'ok' }));
+      metrics.incMessages.mockClear();
+
+      const room = (gateway as any).rooms.get('default') as RoomState;
+      const enc = encoding.createEncoder();
+      encoding.writeVarUint(enc, 1); // MSG_AWARENESS
+      encoding.writeVarUint8Array(
+        enc,
+        awarenessProtocol.encodeAwarenessUpdate(room.awareness, [room.awareness.clientID]),
+      );
+      const data = Buffer.from(encoding.toUint8Array(enc));
+
+      (gateway as any).handleMessage(client, room, data);
+
+      expect(metrics.incMessages).toHaveBeenCalledWith('awareness');
+    });
+
+    it('records fanout_bytes_total, labeled "doc", when a doc update is published to Redis', () => {
+      const room = new RoomState('default');
+      (gateway as any).rooms.set('default', room);
+      (gateway as any).registerRoomUpdateHandler(room);
+
+      room.doc.transact(() => {
+        room.doc.getArray('messages').push([{ id: 'm1', content: 'hi' }]);
+      });
+
+      expect(metrics.incFanoutBytes).toHaveBeenCalledTimes(1);
+      expect(metrics.incFanoutBytes).toHaveBeenCalledWith(expect.any(Number), 'doc');
+    });
+
+    it('records fanout_bytes_total, labeled "awareness", when an awareness update is published to Redis', () => {
+      const room = new RoomState('default');
+      (gateway as any).rooms.set('default', room);
+      (gateway as any).registerRoomAwarenessHandler(room);
+
+      room.awareness.setLocalState({ user: 'someone' });
+
+      expect(metrics.incFanoutBytes).toHaveBeenCalledWith(expect.any(Number), 'awareness');
+    });
+
+    it('does not increment fanout_bytes_total for a doc update that arrived from Redis', () => {
+      const room = new RoomState('default');
+      (gateway as any).rooms.set('default', room);
+      (gateway as any).registerRoomUpdateHandler(room);
+
+      const source = new Y.Doc();
+      source.getArray('messages').push([{ id: 'm2', content: 'from other instance' }]);
+      const delta = Y.encodeStateAsUpdate(source);
+
+      Y.applyUpdate(room.doc, delta, 'redis');
+
+      expect(metrics.incFanoutBytes).not.toHaveBeenCalled();
+    });
+
+    it('observes persist_duration_seconds and sets yjs_state_bytes on persist', async () => {
+      const room = new RoomState('default');
+      room.doc.getArray('messages').push([{ id: 'm1', content: 'hi' }]);
+
+      await (gateway as any).persistRoomState(room);
+      room.destroy();
+
+      expect(metrics.observePersistDurationSeconds).toHaveBeenCalledWith(expect.any(Number));
+      expect(metrics.setYjsStateBytes).toHaveBeenCalledWith('default', expect.any(Number));
+    });
+
+    it('decrements rooms_loaded and removes the yjs_state_bytes series when an empty room is garbage collected', () => {
+      jest.useFakeTimers();
+
+      const room = new RoomState('default');
+      (gateway as any).rooms.set('default', room);
+      const client = new FakeSocket();
+      room.clients.add(client as any);
+      (gateway as any).clientRoom.set(client, 'default');
+
+      gateway.handleDisconnect(client as any);
+      jest.advanceTimersByTime(30_000);
+
+      expect(metrics.decRoomsLoaded).toHaveBeenCalledTimes(1);
+      expect(metrics.removeYjsStateBytes).toHaveBeenCalledWith('default');
+
+      jest.useRealTimers();
+    });
+
+    it('decrements ws_connections even if the room was already garbage collected out from under the socket', () => {
+      const client = new FakeSocket();
+      (gateway as any).clientRoom.set(client, 'a-room-that-is-gone');
+      // Deliberately no entry in `rooms` for 'a-room-that-is-gone' — simulates
+      // the room having been GC'd between this client's last activity and
+      // its disconnect event.
+
+      gateway.handleDisconnect(client as any);
+
+      expect(metrics.decWsConnections).toHaveBeenCalledTimes(1);
     });
   });
 });

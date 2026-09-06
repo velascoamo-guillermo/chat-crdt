@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { SyncModule } from './sync/sync.module';
 import { RoomsModule } from './rooms/rooms.module';
 import { UsersModule } from './users/users.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { validateEnv } from './config/env.validation';
 
 @Module({
@@ -19,6 +20,7 @@ import { validateEnv } from './config/env.validation';
     SyncModule,
     RoomsModule,
     UsersModule,
+    MetricsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

@@ -1,0 +1,14 @@
+# NodePort so the server is reachable without a LoadBalancer (kind has none
+# by default). `kubectl port-forward` also works against the ClusterIP form,
+# either is fine for local validation.
+apiVersion: v1
+kind: Service
+metadata:
+  name: server
+spec:
+  type: NodePort
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http
+      nodePort: 30001

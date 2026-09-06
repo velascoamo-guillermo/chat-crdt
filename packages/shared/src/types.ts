@@ -20,7 +20,15 @@ export interface AuthResponse {
   user: UserDto;
 }
 
-/** Max chat message length. Enforced client-side (engine) and bounds WS payload size. */
+/**
+ * Max chat message length, in characters — enforced client-side (engine) on
+ * the PLAINTEXT, before any E2EE encryption (ADR-010: sendMessage's own
+ * MAX_MESSAGE_LENGTH check runs on `trimmed`, unchanged). No longer a tight
+ * bound on wire size for an E2EE message: the post-encryption envelope
+ * (base64 nonce/ciphertext + JSON framing) runs larger than the plaintext it
+ * wraps — worst case (4000 mostly-multi-byte characters) lands around 16 KB,
+ * still well under sync.gateway.ts's 64 KB MAX_WS_MESSAGE_BYTES frame limit.
+ */
 export const MAX_MESSAGE_LENGTH = 4000;
 
 // const object instead of enum — avoids dual-package hazard in ESM/CJS contexts

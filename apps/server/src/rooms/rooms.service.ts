@@ -6,6 +6,8 @@ export interface RoomSummary {
   id: string;
   name: string;
   role: string;
+  /** ADR-010: 0 = E2EE not enabled for this room. */
+  currentKeyId: number;
 }
 
 @Injectable()
@@ -29,6 +31,7 @@ export class RoomsService {
       id: m.room.id,
       name: m.room.name,
       role: m.role,
+      currentKeyId: m.room.currentKeyId,
     }));
 
     if (!rooms.some((r) => r.name === 'default')) {
@@ -37,7 +40,9 @@ export class RoomsService {
       // created lazily; see SyncGateway.getOrCreateRoom on first WS
       // connect). Safe because every consumer (mobile client routing,
       // POST /rooms/:name/join) keys off `name`, never this `id`.
-      rooms.push({ id: 'default', name: 'default', role: 'member' });
+      // currentKeyId: 0 — the default room stays E2EE-off (ADR-010
+      // amendment #3), matching Room.currentKeyId's schema default.
+      rooms.push({ id: 'default', name: 'default', role: 'member', currentKeyId: 0 });
     }
 
     return rooms;
@@ -51,7 +56,7 @@ export class RoomsService {
     await this.prisma.roomMember.create({
       data: { roomId: room.id, userId, role: 'admin' },
     });
-    return { id: room.id, name: room.name, role: 'admin' };
+    return { id: room.id, name: room.name, role: 'admin', currentKeyId: room.currentKeyId };
   }
 
   async join(roomName: string, userId: string) {
@@ -61,10 +66,12 @@ export class RoomsService {
     const existing = await this.prisma.roomMember.findUnique({
       where: { roomId_userId: { roomId: room.id, userId } },
     });
-    if (existing) return { id: room.id, name: room.name, role: existing.role };
+    if (existing) {
+      return { id: room.id, name: room.name, role: existing.role, currentKeyId: room.currentKeyId };
+    }
 
     await this.prisma.roomMember.create({ data: { roomId: room.id, userId } });
-    return { id: room.id, name: room.name, role: 'member' };
+    return { id: room.id, name: room.name, role: 'member', currentKeyId: room.currentKeyId };
   }
 
   async isMember(roomName: string, userId: string): Promise<boolean> {

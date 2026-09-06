@@ -6,6 +6,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { SyncModule } from './sync/sync.module';
 import { RoomsModule } from './rooms/rooms.module';
+import { UsersModule } from './users/users.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { validateEnv } from './config/env.validation';
 
@@ -18,6 +19,7 @@ import { validateEnv } from './config/env.validation';
     AuthModule,
     SyncModule,
     RoomsModule,
+    UsersModule,
     MetricsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

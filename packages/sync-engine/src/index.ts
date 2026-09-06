@@ -4,3 +4,4 @@ export { SQLitePersistence, MemoryStorage } from './SQLitePersistence';
 export type { SyncEngineConfig } from './types';
 export type { WebSocketProviderConfig, ProviderStatus } from './WebSocketProvider';
 export type { IStorage } from './SQLitePersistence';
+export type { ContentCipher, MessageAad } from './ContentCipher';

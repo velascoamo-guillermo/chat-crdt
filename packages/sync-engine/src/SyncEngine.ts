@@ -25,13 +25,25 @@ export class SyncEngine {
     if (trimmed.length > MAX_MESSAGE_LENGTH) {
       throw new Error(`Message exceeds ${MAX_MESSAGE_LENGTH} characters`);
     }
+    const id = ulid();
+    const createdAt = Date.now();
+    const { roomId, userId, username, contentCipher } = this.config;
+
+    // ADR-010: AAD is composed here, post-compose pre-insert, from the exact
+    // fields the engine just generated (id, createdAt) plus the config ones
+    // — app code calling sendMessage cannot construct this AAD itself, which
+    // is why encryption lives inside the engine, not above it.
+    const storedContent = contentCipher
+      ? contentCipher.encrypt(trimmed, { id, roomId, userId, username, createdAt })
+      : trimmed;
+
     const msg: MessageDto = {
-      id: ulid(),
-      roomId: this.config.roomId,
-      userId: this.config.userId,
-      username: this.config.username,
-      content: trimmed,
-      createdAt: Date.now(),
+      id,
+      roomId,
+      userId,
+      username,
+      content: storedContent,
+      createdAt,
     };
     this.messages.push([msg]);
     return msg;

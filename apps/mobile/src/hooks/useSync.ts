@@ -7,6 +7,9 @@ import {
 } from '@chat-crdt/sync-engine';
 import { useAuthStore } from '../store/auth.store';
 import { useChatStore } from '../store/chat.store';
+import { useRoomsStore } from '../store/rooms.store';
+import { useE2eeCipher } from './useE2ee';
+import { E2EE_PREFIX } from '../crypto/e2eeEnvelope';
 
 const WS_URL = process.env.EXPO_PUBLIC_WS_URL ?? 'ws://localhost:3001/sync';
 
@@ -43,6 +46,14 @@ export function useSync(roomId: string) {
   const engineRef = useRef<SyncEngine | null>(null);
   const providerRef = useRef<WebSocketProvider | null>(null);
 
+  // ADR-010: builds (and starts loading keys for) this room's ContentCipher
+  // when the room is E2EE-enabled; null for 'default' or any room whose
+  // currentKeyId is still 0. Resolved synchronously from useRoomsStore at
+  // mount time — contentCipher is fixed at SyncEngine construction (ADR),
+  // so flipping a room from disabled to enabled requires re-mounting this
+  // hook (leaving/re-entering the room), not a live flag flip.
+  const contentCipher = useE2eeCipher(roomId);
+
   useEffect(() => {
     if (!token || !user) return;
 
@@ -65,6 +76,9 @@ export function useSync(roomId: string) {
       roomId,
       userId: user.id,
       username: user.username,
+      // undefined (not yet resolved, or room is E2EE-disabled) = plaintext,
+      // matching SyncEngine's own "no cipher" passthrough (ADR-010).
+      contentCipher: contentCipher ?? undefined,
     });
     engineRef.current = engine;
 
@@ -81,7 +95,26 @@ export function useSync(roomId: string) {
       // Show locally stored messages immediately
       setMessages(roomId, engine.getMessages());
 
-      unsubMessages = engine.subscribe((msgs) => setMessages(roomId, msgs));
+      unsubMessages = engine.subscribe((msgs) => {
+        setMessages(roomId, msgs);
+
+        // Mid-session enablement detection (code review round 1, Critical
+        // #1): a member already sitting in this room when an admin enables
+        // E2EE has no other signal that it happened — there's no live
+        // room-summary subscription, just the one-shot GET /rooms this
+        // screen's rooms-list mount already did. An E2E1-prefixed message
+        // arriving over sync while this device's copy of currentKeyId still
+        // reads 0 is itself deterministic proof the room got enabled
+        // without us knowing yet, so refetch the rooms list — that flips
+        // useRoomsStore's currentKeyId, which useE2eeCipher reads reactively
+        // and turns into a real cipher (tearing down and rebuilding this
+        // engine with it, since contentCipher is fixed at construction).
+        if (roomId === 'default') return;
+        const summary = useRoomsStore.getState().rooms.find((r) => r.name === roomId);
+        if (summary && summary.currentKeyId === 0 && msgs.some((m) => m.content.startsWith(E2EE_PREFIX))) {
+          void useRoomsStore.getState().fetchRooms();
+        }
+      });
 
       provider = new WebSocketProvider(engine, {
         url: `${WS_URL}?room=${roomId}`,
@@ -132,7 +165,12 @@ export function useSync(roomId: string) {
         return db.closeAsync();
       });
     };
-  }, [token, user?.id, roomId]);
+    // contentCipher is intentionally a dependency: when it transitions from
+    // null (not yet resolved) to a real instance, this whole effect reruns
+    // — tearing down and rebuilding the engine/provider/persistence with
+    // the cipher now wired in (ADR-010: contentCipher is fixed at
+    // construction, so there is no "just flip a flag" path).
+  }, [token, user?.id, roomId, contentCipher]);
 
   const sendMessage = (content: string) => {
     engineRef.current?.sendMessage(content);

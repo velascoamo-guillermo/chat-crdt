@@ -18,7 +18,8 @@
       "expo-router",
       "expo-secure-store",
       "expo-status-bar",
-      "expo-sqlite"
+      "expo-sqlite",
+      "react-native-libsodium"
     ],
     "experiments": {
       "typedRoutes": true

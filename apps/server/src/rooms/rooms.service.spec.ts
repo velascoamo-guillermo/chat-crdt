@@ -26,9 +26,9 @@ describe('RoomsService', () => {
   });
 
   describe('listForUser', () => {
-    it('returns rooms the user is an explicit member of, mapped to id/name/role', async () => {
+    it('returns rooms the user is an explicit member of, mapped to id/name/role/currentKeyId', async () => {
       mockPrisma.roomMember.findMany.mockResolvedValue([
-        { role: 'admin', room: { id: 'room-1', name: 'my-room' } },
+        { role: 'admin', room: { id: 'room-1', name: 'my-room', currentKeyId: 2 } },
       ]);
 
       const result = await service.listForUser('user-1');
@@ -37,26 +37,26 @@ describe('RoomsService', () => {
         where: { userId: 'user-1' },
         include: { room: true },
       });
-      expect(result).toContainEqual({ id: 'room-1', name: 'my-room', role: 'admin' });
+      expect(result).toContainEqual({ id: 'room-1', name: 'my-room', role: 'admin', currentKeyId: 2 });
     });
 
-    it('always includes the open "default" lobby even without an explicit membership row', async () => {
+    it('always includes the open "default" lobby even without an explicit membership row, E2EE off (currentKeyId 0)', async () => {
       mockPrisma.roomMember.findMany.mockResolvedValue([]);
 
       const result = await service.listForUser('user-1');
 
-      expect(result).toContainEqual({ id: 'default', name: 'default', role: 'member' });
+      expect(result).toContainEqual({ id: 'default', name: 'default', role: 'member', currentKeyId: 0 });
     });
 
     it('does not duplicate "default" when the user already has an explicit membership row for it', async () => {
       mockPrisma.roomMember.findMany.mockResolvedValue([
-        { role: 'admin', room: { id: 'default-uuid', name: 'default' } },
+        { role: 'admin', room: { id: 'default-uuid', name: 'default', currentKeyId: 0 } },
       ]);
 
       const result = await service.listForUser('user-1');
 
       expect(result.filter((r) => r.name === 'default')).toHaveLength(1);
-      expect(result).toContainEqual({ id: 'default-uuid', name: 'default', role: 'admin' });
+      expect(result).toContainEqual({ id: 'default-uuid', name: 'default', role: 'admin', currentKeyId: 0 });
     });
   });
 

@@ -84,7 +84,7 @@ export function useE2eeCipher(roomIdOrName: string): LibsodiumContentCipher | nu
       const pending: { userId: string; keyId: number }[] = await res.json();
       const mine = new Set(pending.filter((p) => p.userId === user.id).map((p) => p.keyId));
       setPendingEpochsForMe(roomIdOrName, mine);
-    })();
+    })().catch(() => undefined); // best-effort key loading — never an unhandled rejection
 
     return () => {
       cancelled = true;

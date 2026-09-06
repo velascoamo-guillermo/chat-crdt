@@ -29,7 +29,12 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token) return;
     const ctx: KeyFlowsContext = { apiBase: API, token };
-    void ensureIdentityPublished(ctx, identityKeyStore);
+    // Best-effort: a transient failure here (server unreachable right after
+    // app launch, brief network blip) shouldn't surface as an unhandled
+    // promise rejection — the identity publish gets retried on the next
+    // token change (e.g. re-login) or the next E2EE-enabled room mount
+    // (useE2eeCipher calls ensureIdentityPublished too, idempotently).
+    ensureIdentityPublished(ctx, identityKeyStore).catch(() => undefined);
   }, [token]);
 
   useEffect(() => {

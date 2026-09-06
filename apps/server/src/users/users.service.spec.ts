@@ -25,12 +25,18 @@ describe('UsersService', () => {
   });
 
   describe('setPublicKey', () => {
-    it('derives publicKeyFp as a sha256 hex digest of publicKey and stores both on the user', async () => {
+    it('derives publicKeyFp as a BLAKE2b-512 hex digest of publicKey and stores both on the user', async () => {
+      // BLAKE2b, not SHA-256: react-native-libsodium exposes crypto_generichash
+      // (BLAKE2b) but no plain SHA-256 primitive, and the mobile client must
+      // independently reproduce this exact fingerprint (ADR-010: the uploader
+      // supplies recipientKeyFp verbatim) — so both sides need a hash
+      // algorithm they can both compute. 64-byte output = 128 hex chars,
+      // matching Node's `blake2b512` digest length.
       mockPrisma.user.update.mockResolvedValue({});
 
       const result = await service.setPublicKey('user-1', 'pubkey-bytes-base64');
 
-      expect(result.publicKeyFp).toMatch(/^[0-9a-f]{64}$/);
+      expect(result.publicKeyFp).toMatch(/^[0-9a-f]{128}$/);
       expect(mockPrisma.user.update).toHaveBeenCalledWith({
         where: { id: 'user-1' },
         data: { publicKey: 'pubkey-bytes-base64', publicKeyFp: result.publicKeyFp },

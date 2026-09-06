@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import {
   View,
   Text,
+  Pressable,
   StyleSheet,
   Platform,
   type LayoutChangeEvent,
@@ -16,7 +17,9 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
 import { useRoomMessages, useRoomWsStatus } from "../../src/store/chat.store";
+import { useRoomsStore } from "../../src/store/rooms.store";
 import { useSync } from "../../src/hooks/useSync";
+import { useEnableRoomE2ee } from "../../src/hooks/useE2ee";
 import { MessageItem } from "../../src/components/MessageItem";
 import { ChatScrollView } from "../../src/components/ChatScrollView";
 import { usePresence } from "../../src/hooks/usePresence";
@@ -48,6 +51,50 @@ function headerTitle(roomId: string): string {
   return roomId === "default" ? "# general" : `# ${roomId}`;
 }
 
+// ADR-010, Key-rotation trigger list item 0 (enablement): no special actor
+// or endpoint beyond the same atomic claim any member can call — in
+// practice, whoever is looking at the room, typically the admin/creator.
+// Minimal UI surface on purpose (scope discipline, amendment #3): a single
+// banner, no room-settings screen. Re-entering the room after enabling is
+// what actually picks up the cipher (contentCipher is fixed at SyncEngine
+// construction — see useSync.ts), hence router.back() below.
+function EnableEncryptionBanner({ roomId }: { roomId: string }) {
+  const t = useUITheme();
+  const enableRoomE2ee = useEnableRoomE2ee();
+  const router = useRouter();
+  const [state, setState] = useState<"idle" | "enabling" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  const handlePress = useCallback(() => {
+    setState("enabling");
+    setError(null);
+    enableRoomE2ee(roomId)
+      .then(() => {
+        router.back();
+        router.navigate(`/(chat)/${roomId}`);
+      })
+      .catch((err: unknown) => {
+        setState("error");
+        setError(err instanceof Error ? err.message : "Failed to enable encryption");
+      });
+  }, [enableRoomE2ee, roomId, router]);
+
+  return (
+    <View style={[styles.e2eeBanner, { backgroundColor: t.surface, borderColor: t.border }]}>
+      <Pressable
+        testID="enable-e2ee-button"
+        onPress={handlePress}
+        disabled={state === "enabling"}
+      >
+        <Text style={[styles.e2eeBannerText, { color: t.accent }]}>
+          {state === "enabling" ? "Enabling encryption…" : "🔒 Enable end-to-end encryption"}
+        </Text>
+      </Pressable>
+      {error ? <Text style={[styles.e2eeBannerError, { color: t.status.offline }]}>{error}</Text> : null}
+    </View>
+  );
+}
+
 export default function ChatScreen() {
   const { roomId: roomIdParam } = useLocalSearchParams<{ roomId: string }>();
   const roomId = roomIdParam ?? "default";
@@ -59,6 +106,9 @@ export default function ChatScreen() {
   const t = useUITheme();
   const { top, bottom } = useSafeAreaInsets();
   const headerHeight = top + HEADER_BASE;
+
+  const roomSummary = useRoomsStore((s) => s.rooms.find((r) => r.name === roomId));
+  const canEnableE2ee = roomId !== "default" && roomSummary?.role === "admin" && roomSummary.currentKeyId === 0;
 
   const [composerHeight, setComposerHeight] = useState(0);
 
@@ -140,6 +190,7 @@ export default function ChatScreen() {
 
       <KeyboardStickyView style={[styles.composer]}>
         <View onLayout={handleComposerLayout}>
+          {canEnableE2ee ? <EnableEncryptionBanner roomId={roomId} /> : null}
           <TypingIndicator typingUsers={typingUsers} />
           {/* QA-only readout for the Maestro E2E offline-sync flow — gated by
               QA_READOUT_ENABLED (see above), never present in a release build.
@@ -182,6 +233,16 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   list: { flex: 1 },
+  e2eeBanner: {
+    marginHorizontal: 12,
+    marginBottom: 4,
+    padding: 10,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+  },
+  e2eeBannerText: { fontSize: 13, fontWeight: "600" },
+  e2eeBannerError: { fontSize: 11, marginTop: 4 },
   debugReadout: {
     alignSelf: "center",
     fontSize: 9,

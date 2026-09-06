@@ -14,12 +14,17 @@ import { isLiquidGlassAvailable } from "expo-glass-effect";
 interface Props {
   onSend: (content: string) => void;
   sendTyping: (active: boolean) => void;
+  /** ADR-010 send gate (code review round 1, Critical #1/#3): when false,
+   * sending is blocked and the draft is preserved rather than cleared —
+   * used while the room is E2EE-enabled but this device hasn't loaded the
+   * current epoch's key yet. */
+  disabled?: boolean;
 }
 
 const TYPING_THROTTLE_MS = 300;
 const CIRCLE = 40;
 
-export const Composer = memo(function Composer({ onSend, sendTyping }: Props) {
+export const Composer = memo(function Composer({ onSend, sendTyping, disabled = false }: Props) {
   // Text lives in native state — keystrokes don't round-trip through JS or
   // re-render React. `draft.value` is read on demand when sending.
   const draft = useNativeState("");
@@ -45,13 +50,22 @@ export const Composer = memo(function Composer({ onSend, sendTyping }: Props) {
   );
 
   const handleSend = useCallback(() => {
+    if (disabled) return;
     const content = draft.value.trim();
     if (!content) return;
-    onSend(content);
+    try {
+      onSend(content);
+    } catch {
+      // Blocked send (e.g. a stale-epoch/no-key throw the gate above didn't
+      // catch in time — code review round 1, Critical #3): the caller is
+      // responsible for surfacing an error state; preserve the draft rather
+      // than silently discarding what the user typed.
+      return;
+    }
     draft.value = "";
     lastActive.current = false;
     sendTyping(false);
-  }, [draft, onSend, sendTyping]);
+  }, [disabled, draft, onSend, sendTyping]);
 
   return (
     <Host

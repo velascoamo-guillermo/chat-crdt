@@ -7,7 +7,9 @@ import {
 } from '@chat-crdt/sync-engine';
 import { useAuthStore } from '../store/auth.store';
 import { useChatStore } from '../store/chat.store';
+import { useRoomsStore } from '../store/rooms.store';
 import { useE2eeCipher } from './useE2ee';
+import { E2EE_PREFIX } from '../crypto/e2eeEnvelope';
 
 const WS_URL = process.env.EXPO_PUBLIC_WS_URL ?? 'ws://localhost:3001/sync';
 
@@ -93,7 +95,26 @@ export function useSync(roomId: string) {
       // Show locally stored messages immediately
       setMessages(roomId, engine.getMessages());
 
-      unsubMessages = engine.subscribe((msgs) => setMessages(roomId, msgs));
+      unsubMessages = engine.subscribe((msgs) => {
+        setMessages(roomId, msgs);
+
+        // Mid-session enablement detection (code review round 1, Critical
+        // #1): a member already sitting in this room when an admin enables
+        // E2EE has no other signal that it happened — there's no live
+        // room-summary subscription, just the one-shot GET /rooms this
+        // screen's rooms-list mount already did. An E2E1-prefixed message
+        // arriving over sync while this device's copy of currentKeyId still
+        // reads 0 is itself deterministic proof the room got enabled
+        // without us knowing yet, so refetch the rooms list — that flips
+        // useRoomsStore's currentKeyId, which useE2eeCipher reads reactively
+        // and turns into a real cipher (tearing down and rebuilding this
+        // engine with it, since contentCipher is fixed at construction).
+        if (roomId === 'default') return;
+        const summary = useRoomsStore.getState().rooms.find((r) => r.name === roomId);
+        if (summary && summary.currentKeyId === 0 && msgs.some((m) => m.content.startsWith(E2EE_PREFIX))) {
+          void useRoomsStore.getState().fetchRooms();
+        }
+      });
 
       provider = new WebSocketProvider(engine, {
         url: `${WS_URL}?room=${roomId}`,

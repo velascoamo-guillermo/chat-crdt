@@ -20,6 +20,14 @@ const NONCE_BYTES = 24;
 export class LibsodiumContentCipher implements ContentCipher {
   private readonly keysByEpoch = new Map<number, Uint8Array>();
   private currentKeyId: number | null = null;
+  // The room's actual current epoch per the server (RoomSummary.currentKeyId
+  // / Room.currentKeyId), set externally by useE2eeCipher whenever it
+  // changes. Distinct from `currentKeyId` above (the highest epoch THIS
+  // cipher happens to have a key loaded for): without this check, a device
+  // that hasn't yet been served a just-rotated epoch's grant would silently
+  // keep encrypting new messages under its last-known (now stale) key —
+  // code review round 1, Important #1.
+  private expectedCurrentEpoch: number | null = null;
 
   /** Registers an unwrapped room key for an epoch. Highest keyId wins as "current". */
   setKey(keyId: number, key: Uint8Array): void {
@@ -33,11 +41,26 @@ export class LibsodiumContentCipher implements ContentCipher {
     return this.keysByEpoch.has(keyId);
   }
 
+  /** The room's actual current epoch, per the server — see field doc above. */
+  setExpectedCurrentEpoch(keyId: number): void {
+    this.expectedCurrentEpoch = keyId;
+  }
+
   encrypt(plaintext: string, ad: MessageAad): string {
     if (this.currentKeyId === null) {
       // ADR-010, "Send path without a current epoch key": never fall back
       // to plaintext, never encrypt under a stale epoch — block instead.
       throw new Error('e2ee: no current-epoch key cached for this room yet');
+    }
+    if (this.expectedCurrentEpoch !== null && this.currentKeyId !== this.expectedCurrentEpoch) {
+      // We hold SOME key, but not the room's actual current one — e.g. the
+      // room rotated to epoch 2 and this device hasn't been served that
+      // grant yet, while it still holds epoch 1. Encrypting under epoch 1
+      // now would be silently readable-by-nobody-who-matters (members who
+      // dropped the superseded key) rather than a hard, visible failure.
+      throw new Error(
+        `e2ee: stale epoch — holds key ${this.currentKeyId}, room is at ${this.expectedCurrentEpoch}`
+      );
     }
     const key = this.keysByEpoch.get(this.currentKeyId);
     if (!key) {

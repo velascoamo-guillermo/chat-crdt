@@ -16,10 +16,11 @@ import {
 } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
-import { useRoomMessages, useRoomWsStatus } from "../../src/store/chat.store";
+import { useRoomMessages, useRoomWsStatus, useRoomCrypto } from "../../src/store/chat.store";
 import { useRoomsStore } from "../../src/store/rooms.store";
 import { useSync } from "../../src/hooks/useSync";
 import { useEnableRoomE2ee } from "../../src/hooks/useE2ee";
+import { isComposerReady } from "../../src/crypto/composerGate";
 import { MessageItem } from "../../src/components/MessageItem";
 import { ChatScrollView } from "../../src/components/ChatScrollView";
 import { usePresence } from "../../src/hooks/usePresence";
@@ -110,7 +111,18 @@ export default function ChatScreen() {
   const roomSummary = useRoomsStore((s) => s.rooms.find((r) => r.name === roomId));
   const canEnableE2ee = roomId !== "default" && roomSummary?.role === "admin" && roomSummary.currentKeyId === 0;
 
+  // ADR-010 send gate (code review round 1, Critical #1/#3): the room can be
+  // E2EE-enabled (currentKeyId > 0) before this device has actually loaded
+  // the current epoch's key — sending during that window used to throw an
+  // uncaught error out of SyncEngine. `useRoomCrypto`'s `version` field
+  // bumps whenever the cipher gains a key (see useE2ee.ts), so this
+  // recomputes live as grants load.
+  const currentKeyId = roomSummary?.currentKeyId ?? 0;
+  const roomCrypto = useRoomCrypto(roomId);
+  const composerReady = isComposerReady(currentKeyId, roomCrypto?.cipher ?? null);
+
   const [composerHeight, setComposerHeight] = useState(0);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const handleComposerLayout = useCallback((e: LayoutChangeEvent) => {
     setComposerHeight(e.nativeEvent.layout.height);
@@ -123,7 +135,19 @@ export default function ChatScreen() {
 
   const handleSend = useCallback(
     (content: string) => {
-      sendMessage(content);
+      // Defensive try/catch (code review round 1, Critical #3): the
+      // composer gate above is the primary defense, but this stays as a
+      // second line — e.g. a race between the gate's render and the tap, or
+      // any other future throw path out of SyncEngine.sendMessage. Rethrows
+      // so Composer's own handleSend (which called this) knows the send
+      // failed and preserves the draft instead of clearing it.
+      try {
+        sendMessage(content);
+        setSendError(null);
+      } catch (err) {
+        setSendError(err instanceof Error ? err.message : "Failed to send message");
+        throw err;
+      }
     },
     [sendMessage],
   );
@@ -191,6 +215,18 @@ export default function ChatScreen() {
       <KeyboardStickyView style={[styles.composer]}>
         <View onLayout={handleComposerLayout}>
           {canEnableE2ee ? <EnableEncryptionBanner roomId={roomId} /> : null}
+          {!composerReady ? (
+            <View style={[styles.e2eeBanner, { backgroundColor: t.surface, borderColor: t.border }]}>
+              <Text style={[styles.e2eeBannerText, { color: t.textSecondary }]}>
+                🔒 Waiting for encryption key…
+              </Text>
+            </View>
+          ) : null}
+          {sendError ? (
+            <Text style={[styles.e2eeBannerError, { color: t.status.offline, textAlign: "center" }]}>
+              {sendError}
+            </Text>
+          ) : null}
           <TypingIndicator typingUsers={typingUsers} />
           {/* QA-only readout for the Maestro E2E offline-sync flow — gated by
               QA_READOUT_ENABLED (see above), never present in a release build.
@@ -223,7 +259,7 @@ export default function ChatScreen() {
               </Text>
             </>
           )}
-          <Composer onSend={handleSend} sendTyping={sendTyping} />
+          <Composer onSend={handleSend} sendTyping={sendTyping} disabled={!composerReady} />
         </View>
       </KeyboardStickyView>
     </KeyboardGestureArea>

@@ -25,10 +25,18 @@ const keyStore = new RoomKeyStore(secureStoreBackend);
  * identity-publish / grant-load / first-responder-serve flows whenever a
  * room with E2EE enabled is opened.
  *
- * Returns null when the room isn't E2EE-enabled (or isn't known to
- * useRoomsStore yet — a known MVP gap: a cold deep-link straight into an
- * E2EE room, bypassing the rooms list fetch, opens in plaintext-cipher-less
- * mode this mount; reopening the room after the list has loaded works).
+ * Reactive (code review round 1, Critical #1): `currentKeyId` is read via a
+ * `useRoomsStore` selector, not a one-shot `.getState()` snapshot, so a
+ * member already sitting in the room when an admin enables E2EE picks up
+ * the cipher as soon as this device's copy of `currentKeyId` updates —
+ * either via its own `fetchRooms()` (e.g. screen focus) or via the
+ * mid-session-enablement detector in `useSync` (an E2E1 envelope arriving
+ * over sync while this room's local `currentKeyId` still reads 0 is itself
+ * proof the room got enabled without a rooms-list refetch yet, and triggers
+ * one — see useSync.ts). Returns null only while genuinely E2EE-disabled;
+ * the composer's send gate (ChatScreen) additionally checks whether the
+ * cipher actually HOLDS the current epoch's key yet, since construction and
+ * key-loading are two different async steps.
  */
 export function useE2eeCipher(roomIdOrName: string): LibsodiumContentCipher | null {
   const token = useAuthStore((s) => s.token);
@@ -37,29 +45,36 @@ export function useE2eeCipher(roomIdOrName: string): LibsodiumContentCipher | nu
   const setPendingEpochsForMe = useChatStore((s) => s.setPendingEpochsForMe);
   const bumpRoomCrypto = useChatStore((s) => s.bumpRoomCrypto);
 
+  const currentKeyId = useRoomsStore(
+    (s) => s.rooms.find((r) => r.name === roomIdOrName)?.currentKeyId ?? 0
+  );
+  // A fresh cipher (and thus a fresh SyncEngine, via useSync's dependency on
+  // this hook's return value) is only needed on the 0->1 enablement
+  // transition; currentKeyId ticking further (rotation) reuses the same
+  // cipher instance — fetchAndLoadMyGrants below loads the new epoch's key
+  // into it without a rebuild. Named boolean (not an inline expression) so
+  // it reads as a plain identifier in the useMemo deps array below.
+  const roomIsE2eeEnabled = currentKeyId > 0;
+
   // Derived synchronously during render, not via setState-in-effect (this
   // project's lint config rejects that pattern) — useSync's own
   // engine-construction effect depends on this value (see useSync.ts) to
   // know when to tear down and rebuild the SyncEngine with the cipher
-  // (ADR-010: contentCipher is fixed at SyncEngine construction). Reads
-  // useRoomsStore's snapshot synchronously; a room whose summary/currentKeyId
-  // arrives AFTER this memo last ran won't retroactively produce a cipher
-  // this mount (known MVP gap — see doc comment above).
+  // (ADR-010: contentCipher is fixed at SyncEngine construction).
   const cipher = useMemo<LibsodiumContentCipher | null>(() => {
     if (!token || !user) return null;
     if (roomIdOrName === 'default') return null; // amendment #3: default room stays E2EE-off
-
-    const summary = useRoomsStore.getState().rooms.find((r) => r.name === roomIdOrName);
-    if (!summary || summary.currentKeyId <= 0) return null;
+    if (!roomIsE2eeEnabled) return null;
 
     return new LibsodiumContentCipher();
-  }, [token, user, roomIdOrName]);
+  }, [token, user, roomIdOrName, roomIsE2eeEnabled]);
 
   useEffect(() => {
     if (!cipher || !token || !user) return;
     const summary = useRoomsStore.getState().rooms.find((r) => r.name === roomIdOrName);
     if (!summary) return;
 
+    cipher.setExpectedCurrentEpoch(summary.currentKeyId);
     setRoomCipher(roomIdOrName, cipher);
 
     const ctx: KeyFlowsContext = { apiBase: API, token };
@@ -89,7 +104,7 @@ export function useE2eeCipher(roomIdOrName: string): LibsodiumContentCipher | nu
     return () => {
       cancelled = true;
     };
-  }, [cipher, token, user, roomIdOrName, setRoomCipher, setPendingEpochsForMe, bumpRoomCrypto]);
+  }, [cipher, currentKeyId, token, user, roomIdOrName, setRoomCipher, setPendingEpochsForMe, bumpRoomCrypto]);
 
   return cipher;
 }

@@ -101,14 +101,38 @@ export class RoomKeysService {
   ): Promise<{ currentKeyId: number }> {
     const actor = await this.assertMember(roomId, actorId);
 
+    // Authorization on the grant targets themselves (code review round 1,
+    // Important #3) — assertMember above only proves the UPLOADER is a
+    // member; nothing previously stopped them from also naming an arbitrary
+    // non-member userId as a grant RECIPIENT.
+    if (dto.grants.length > 0) {
+      const members = await this.prisma.roomMember.findMany({
+        where: { roomId },
+        select: { userId: true },
+      });
+      const memberIds = new Set(members.map((m) => m.userId));
+      for (const g of dto.grants) {
+        if (!memberIds.has(g.userId)) {
+          throw new ForbiddenException(`Cannot grant a key to "${g.userId}" — not a member of this room`);
+        }
+      }
+    }
+
     if (!dto.claimEpoch) {
       // First-responder pattern: any online member holding epoch(s) a
-      // pending member needs can serve them — no admin gate here.
-      await this.prisma.roomKeyGrant.createMany({
-        data: dto.grants.map((g) => ({ roomId, ...g })),
-        skipDuplicates: true,
-      });
+      // pending member needs can serve them — no admin gate here. Still
+      // bounded to epochs that actually exist yet (code review round 1,
+      // Important #3) — a non-admin has no legitimate reason to grant a
+      // future epoch, since only the atomic claim below can ever create one.
       const room = await this.prisma.room.findUniqueOrThrow({ where: { id: roomId } });
+      for (const g of dto.grants) {
+        if (g.keyId > room.currentKeyId) {
+          throw new ForbiddenException(
+            `Cannot grant epoch ${g.keyId} — room's current epoch is ${room.currentKeyId}`,
+          );
+        }
+      }
+      await this.upsertGrants(this.prisma, roomId, dto.grants);
       return { currentKeyId: room.currentKeyId };
     }
 
@@ -120,6 +144,14 @@ export class RoomKeysService {
     }
 
     const { expectedCurrentKeyId } = dto.claimEpoch;
+    const claimedKeyId = expectedCurrentKeyId + 1;
+    for (const g of dto.grants) {
+      if (g.keyId !== claimedKeyId) {
+        throw new ForbiddenException(
+          `A claim's grants must all target the newly claimed epoch (${claimedKeyId}), got ${g.keyId}`,
+        );
+      }
+    }
 
     return this.prisma.$transaction(async (tx) => {
       // Conditional increment + grant insert in one transaction: either
@@ -132,12 +164,38 @@ export class RoomKeysService {
       if (updated.count !== 1) {
         throw new ConflictException('Room key epoch has already advanced — retry with the current epoch');
       }
-      await tx.roomKeyGrant.createMany({
-        data: dto.grants.map((g) => ({ roomId, ...g })),
-        skipDuplicates: true,
-      });
-      return { currentKeyId: expectedCurrentKeyId + 1 };
+      await this.upsertGrants(tx, roomId, dto.grants);
+      return { currentKeyId: claimedKeyId };
     });
+  }
+
+  /**
+   * upsert, not createMany+skipDuplicates (code review round 1, Important
+   * #2): the primary key is (roomId, userId, keyId), so a grant re-served
+   * after the recipient's publicKeyFp was invalidated (reinstall — see
+   * UsersService.setPublicKey deleting their old grants) lands on a
+   * (roomId, userId, keyId) triple that can, in the ordinary course of
+   * events, already be occupied by an unrelated still-valid row for a
+   * DIFFERENT prior key — skipDuplicates silently dropped the re-serve
+   * attempt instead of updating it, permanently stranding that member.
+   * Each grant is independent, so per-row upsert (vs. a single bulk
+   * statement Prisma's createMany supports but upsert doesn't) is fine here
+   * — this path is never more than one room's worth of members per call.
+   */
+  private async upsertGrants(
+    client: Pick<PrismaService, 'roomKeyGrant'>,
+    roomId: string,
+    grants: UploadKeysDto['grants'],
+  ): Promise<void> {
+    await Promise.all(
+      grants.map((g) =>
+        client.roomKeyGrant.upsert({
+          where: { roomId_userId_keyId: { roomId, userId: g.userId, keyId: g.keyId } },
+          create: { roomId, userId: g.userId, keyId: g.keyId, wrappedKey: g.wrappedKey, recipientKeyFp: g.recipientKeyFp },
+          update: { wrappedKey: g.wrappedKey, recipientKeyFp: g.recipientKeyFp },
+        }),
+      ),
+    );
   }
 
   private async assertMember(roomId: string, userId: string) {

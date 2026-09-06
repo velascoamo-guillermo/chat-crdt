@@ -5,6 +5,7 @@ import { useAuthStore } from "../store/auth.store";
 import { useUITheme } from "../ui";
 import { theme } from "../ui";
 import { useRoomCrypto, useRoomPendingEpochsForMe } from "../store/chat.store";
+import { useRoomsStore } from "../store/rooms.store";
 import { resolveMessageRenderState } from "../crypto/renderState";
 
 interface Props {
@@ -21,9 +22,17 @@ export const MessageItem = memo(function MessageItem({ message }: Props) {
   // resolveMessageRenderState, so plain rooms render exactly as before.
   const roomCrypto = useRoomCrypto(message.roomId);
   const pendingEpochsForMe = useRoomPendingEpochsForMe(message.roomId);
-  const renderState = resolveMessageRenderState(message, roomCrypto?.cipher ?? null, {
-    hasPendingGrantFor: (keyId) => pendingEpochsForMe.has(keyId),
-  });
+  // message.roomId is the room's slug/name (same identifier useE2eeCipher and
+  // the [roomId] route use), not the server's RoomSummary.id — matches how
+  // roomCryptoByRoom itself is keyed (setRoomCipher(roomIdOrName, ...)).
+  const roomIsE2eeEnabled =
+    (useRoomsStore((s) => s.rooms.find((r) => r.name === message.roomId)?.currentKeyId) ?? 0) > 0;
+  const renderState = resolveMessageRenderState(
+    message,
+    roomCrypto?.cipher ?? null,
+    { hasPendingGrantFor: (keyId) => pendingEpochsForMe.has(keyId) },
+    roomIsE2eeEnabled
+  );
 
   const displayText =
     renderState.type === "plaintext" || renderState.type === "decrypted"

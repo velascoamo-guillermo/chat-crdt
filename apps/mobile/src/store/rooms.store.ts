@@ -7,6 +7,8 @@ export interface RoomSummary {
   id: string;
   name: string;
   role: string;
+  /** ADR-010: 0 = E2EE not enabled for this room. Mirrors the server's RoomSummary. */
+  currentKeyId: number;
 }
 
 // Nest's ValidationPipe returns `message` as either a single string or an

@@ -1,7 +1,22 @@
 import { create } from 'zustand';
 import type { MessageDto } from '@chat-crdt/shared';
+import type { LibsodiumContentCipher } from '../crypto/LibsodiumContentCipher';
 
 type WsStatus = 'disconnected' | 'connecting' | 'connected';
+
+// ADR-010: per-room E2EE runtime state, read by MessageItem to resolve each
+// message's render state (decrypted / waiting-for-key / key-unavailable —
+// see src/crypto/renderState.ts). The cipher instance is mutated in place
+// as new grants arrive (LibsodiumContentCipher.setKey); `version` exists
+// solely so replacing this wrapper object (bumpRoomCrypto) gives zustand a
+// new reference to notify subscribers with, since mutating the cipher alone
+// wouldn't.
+export interface RoomCryptoState {
+  cipher: LibsodiumContentCipher;
+  /** Epochs this user has a pending (not-yet-served) grant for, in this room. */
+  pendingEpochsForMe: Set<number>;
+  version: number;
+}
 
 // Keyed by roomId — the app can have more than one room screen mounted at
 // once (Expo Router keeps the previous stack entry mounted for back-swipe),
@@ -22,16 +37,21 @@ interface ChatState {
   messagesByRoom: Record<string, MessageDto[]>;
   wsStatusByRoom: Record<string, WsStatus>;
   mountCounts: Record<string, number>;
+  roomCryptoByRoom: Record<string, RoomCryptoState | undefined>;
   setMessages: (roomId: string, messages: MessageDto[]) => void;
   setWsStatus: (roomId: string, status: WsStatus) => void;
   registerMount: (roomId: string) => void;
   clearRoom: (roomId: string) => void;
+  setRoomCipher: (roomId: string, cipher: LibsodiumContentCipher) => void;
+  setPendingEpochsForMe: (roomId: string, epochs: Set<number>) => void;
+  bumpRoomCrypto: (roomId: string) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
   messagesByRoom: {},
   wsStatusByRoom: {},
   mountCounts: {},
+  roomCryptoByRoom: {},
   setMessages: (roomId, messages) =>
     set((s) => ({ messagesByRoom: { ...s.messagesByRoom, [roomId]: messages } })),
   setWsStatus: (roomId, wsStatus) =>
@@ -49,9 +69,46 @@ export const useChatStore = create<ChatState>((set) => ({
       const { [roomId]: _msgs, ...messagesByRoom } = s.messagesByRoom;
       const { [roomId]: _status, ...wsStatusByRoom } = s.wsStatusByRoom;
       const { [roomId]: _count, ...mountCounts } = s.mountCounts;
-      return { messagesByRoom, wsStatusByRoom, mountCounts };
+      const { [roomId]: _crypto, ...roomCryptoByRoom } = s.roomCryptoByRoom;
+      return { messagesByRoom, wsStatusByRoom, mountCounts, roomCryptoByRoom };
+    }),
+  setRoomCipher: (roomId, cipher) =>
+    set((s) => ({
+      roomCryptoByRoom: {
+        ...s.roomCryptoByRoom,
+        [roomId]: { cipher, pendingEpochsForMe: s.roomCryptoByRoom[roomId]?.pendingEpochsForMe ?? new Set(), version: 0 },
+      },
+    })),
+  setPendingEpochsForMe: (roomId, epochs) =>
+    set((s) => {
+      const existing = s.roomCryptoByRoom[roomId];
+      if (!existing) return {};
+      return {
+        roomCryptoByRoom: {
+          ...s.roomCryptoByRoom,
+          [roomId]: { ...existing, pendingEpochsForMe: epochs, version: existing.version + 1 },
+        },
+      };
+    }),
+  bumpRoomCrypto: (roomId) =>
+    set((s) => {
+      const existing = s.roomCryptoByRoom[roomId];
+      if (!existing) return {};
+      return {
+        roomCryptoByRoom: { ...s.roomCryptoByRoom, [roomId]: { ...existing, version: existing.version + 1 } },
+      };
     }),
 }));
+
+const EMPTY_PENDING_EPOCHS: Set<number> = new Set();
+
+export function useRoomCrypto(roomId: string): RoomCryptoState | undefined {
+  return useChatStore((s) => s.roomCryptoByRoom[roomId]);
+}
+
+export function useRoomPendingEpochsForMe(roomId: string): Set<number> {
+  return useChatStore((s) => s.roomCryptoByRoom[roomId]?.pendingEpochsForMe ?? EMPTY_PENDING_EPOCHS);
+}
 
 // Stable reference for rooms with no messages yet. `s.messagesByRoom[roomId]
 // ?? []` would allocate a NEW empty array on every single selector call —

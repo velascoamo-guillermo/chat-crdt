@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "build": "expo export",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit && tsc -p .maestro/scripts/tsconfig.json"
+    "typecheck": "tsc --noEmit && tsc -p .maestro/scripts/tsconfig.json",
+    "test": "bun test src/crypto"
   },
   "dependencies": {
     "@chat-crdt/shared": "workspace:*",
@@ -31,6 +32,7 @@
     "react-native": "0.85.3",
     "react-native-get-random-values": "^2.0.0",
     "react-native-keyboard-controller": "^1.21.11",
+    "react-native-libsodium": "^1.7.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {

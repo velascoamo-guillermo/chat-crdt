@@ -16,11 +16,7 @@ import {
 } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
-import {
-  useRoomMessages,
-  useRoomWsStatus,
-  useRoomCrypto,
-} from "../../src/store/chat.store";
+import { useRoomMessages, useRoomWsStatus, useRoomCrypto } from "../../src/store/chat.store";
 import { useRoomsStore } from "../../src/store/rooms.store";
 import { useSync } from "../../src/hooks/useSync";
 import { useEnableRoomE2ee } from "../../src/hooks/useE2ee";
@@ -80,35 +76,22 @@ function EnableEncryptionBanner({ roomId }: { roomId: string }) {
       })
       .catch((err: unknown) => {
         setState("error");
-        setError(
-          err instanceof Error ? err.message : "Failed to enable encryption",
-        );
+        setError(err instanceof Error ? err.message : "Failed to enable encryption");
       });
   }, [enableRoomE2ee, roomId, router]);
 
   return (
-    <View
-      style={[
-        styles.e2eeBanner,
-        { backgroundColor: t.surface, borderColor: t.border },
-      ]}
-    >
+    <View style={[styles.e2eeBanner, { backgroundColor: t.surface, borderColor: t.border }]}>
       <Pressable
         testID="enable-e2ee-button"
         onPress={handlePress}
         disabled={state === "enabling"}
       >
         <Text style={[styles.e2eeBannerText, { color: t.accent }]}>
-          {state === "enabling"
-            ? "Enabling encryption…"
-            : "🔒 Enable end-to-end encryption"}
+          {state === "enabling" ? "Enabling encryption…" : "🔒 Enable end-to-end encryption"}
         </Text>
       </Pressable>
-      {error ? (
-        <Text style={[styles.e2eeBannerError, { color: t.status.offline }]}>
-          {error}
-        </Text>
-      ) : null}
+      {error ? <Text style={[styles.e2eeBannerError, { color: t.status.offline }]}>{error}</Text> : null}
     </View>
   );
 }
@@ -125,13 +108,8 @@ export default function ChatScreen() {
   const { top, bottom } = useSafeAreaInsets();
   const headerHeight = top + HEADER_BASE;
 
-  const roomSummary = useRoomsStore((s) =>
-    s.rooms.find((r) => r.name === roomId),
-  );
-  const canEnableE2ee =
-    roomId !== "default" &&
-    roomSummary?.role === "admin" &&
-    roomSummary.currentKeyId === 0;
+  const roomSummary = useRoomsStore((s) => s.rooms.find((r) => r.name === roomId));
+  const canEnableE2ee = roomId !== "default" && roomSummary?.role === "admin" && roomSummary.currentKeyId === 0;
 
   // ADR-010 send gate (code review round 1, Critical #1/#3): the room can be
   // E2EE-enabled (currentKeyId > 0) before this device has actually loaded
@@ -141,10 +119,7 @@ export default function ChatScreen() {
   // recomputes live as grants load.
   const currentKeyId = roomSummary?.currentKeyId ?? 0;
   const roomCrypto = useRoomCrypto(roomId);
-  const composerReady = isComposerReady(
-    currentKeyId,
-    roomCrypto?.cipher ?? null,
-  );
+  const composerReady = isComposerReady(currentKeyId, roomCrypto?.cipher ?? null);
 
   const [composerHeight, setComposerHeight] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -170,9 +145,7 @@ export default function ChatScreen() {
         sendMessage(content);
         setSendError(null);
       } catch (err) {
-        setSendError(
-          err instanceof Error ? err.message : "Failed to send message",
-        );
+        setSendError(err instanceof Error ? err.message : "Failed to send message");
         throw err;
       }
     },
@@ -182,9 +155,7 @@ export default function ChatScreen() {
   if (membership === "not-a-member") {
     return (
       <View style={styles.notMemberContainer}>
-        <Stack.Screen
-          options={{ headerShown: true, title: headerTitle(roomId) }}
-        />
+        <Stack.Screen options={{ headerShown: true, title: headerTitle(roomId) }} />
         <Text style={[styles.notMemberText, { color: t.textPrimary }]}>
           You&apos;re not a member of this room.
         </Text>
@@ -245,24 +216,14 @@ export default function ChatScreen() {
         <View onLayout={handleComposerLayout}>
           {canEnableE2ee ? <EnableEncryptionBanner roomId={roomId} /> : null}
           {!composerReady ? (
-            <View
-              style={[
-                styles.e2eeBanner,
-                { backgroundColor: t.surface, borderColor: t.border },
-              ]}
-            >
+            <View style={[styles.e2eeBanner, { backgroundColor: t.surface, borderColor: t.border }]}>
               <Text style={[styles.e2eeBannerText, { color: t.textSecondary }]}>
                 🔒 Waiting for encryption key…
               </Text>
             </View>
           ) : null}
           {sendError ? (
-            <Text
-              style={[
-                styles.e2eeBannerError,
-                { color: t.status.offline, textAlign: "center" },
-              ]}
-            >
+            <Text style={[styles.e2eeBannerError, { color: t.status.offline, textAlign: "center" }]}>
               {sendError}
             </Text>
           ) : null}
@@ -298,11 +259,7 @@ export default function ChatScreen() {
               </Text>
             </>
           )}
-          <Composer
-            onSend={handleSend}
-            sendTyping={sendTyping}
-            disabled={!composerReady}
-          />
+          <Composer onSend={handleSend} sendTyping={sendTyping} disabled={!composerReady} />
         </View>
       </KeyboardStickyView>
     </KeyboardGestureArea>

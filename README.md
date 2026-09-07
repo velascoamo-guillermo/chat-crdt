@@ -37,7 +37,7 @@ user with no explicit join.
 
 | Layer | Technology |
 |---|---|
-| Mobile | Expo SDK 56, React Native 0.85, Expo Router, FlashList |
+| Mobile | Expo SDK 57, React Native 0.86, Expo Router, FlashList |
 | Native UI | `@expo/ui` (login + register screens as native islands) |
 | CRDT sync | Yjs, y-protocols, `@chat-crdt/sync-engine` |
 | Mobile storage | op-sqlite (SQLite) |

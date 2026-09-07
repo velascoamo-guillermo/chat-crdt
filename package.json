@@ -17,7 +17,7 @@
   "devDependencies": {
     "@eslint/js": "^9",
     "eslint": "^9",
-    "eslint-config-expo": "^56.0.4",
+    "eslint-config-expo": "^57.0.2",
     "globals": "^17.6.0",
     "turbo": "^2.5.0",
     "typescript": "^5.8.0",

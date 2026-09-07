@@ -15,32 +15,38 @@
     "@chat-crdt/shared": "workspace:*",
     "@chat-crdt/sync-engine": "workspace:*",
     "@expo/material-symbols": "^0.1.1",
-    "@expo/metro-runtime": "~56.0.14",
-    "@expo/ui": "~56.0.16",
+    "@expo/metro-runtime": "~57.0.15",
+    "@expo/ui": "~57.0.16",
     "@shopify/flash-list": "2.0.2",
-    "expo": "^56.0.0",
-    "expo-constants": "~56.0.17",
-    "expo-glass-effect": "~56.0.4",
-    "expo-linear-gradient": "~56.0.4",
-    "expo-linking": "~56.0.13",
-    "expo-router": "~56.2.9",
-    "expo-secure-store": "~56.0.4",
-    "expo-sqlite": "~56.0.4",
-    "expo-status-bar": "~56.0.4",
-    "expo-system-ui": "~56.0.5",
+    "expo": "^57.0.0",
+    "expo-glass-effect": "~57.0.1",
+    "expo-linear-gradient": "~57.0.1",
+    "expo-linking": "~57.0.9",
+    "expo-router": "~57.0.19",
+    "expo-secure-store": "~57.0.3",
+    "expo-sqlite": "~57.0.2",
+    "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.3",
     "react": "19.2.3",
-    "react-native": "0.85.3",
+    "react-native": "0.86.3",
     "react-native-get-random-values": "^2.0.0",
     "react-native-keyboard-controller": "^1.21.11",
     "react-native-libsodium": "^1.7.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
-    "@babel/core": "^7.25.0",
     "@types/node": "^22.0.0",
     "@types/react": "~19.2.14",
     "@types/ws": "^8.18.0",
     "bun-types": "^1.2.20",
     "ws": "^8.18.0"
+  },
+  "expo": {
+    "install": {
+      "exclude": [
+        "react-native-get-random-values",
+        "react-native-keyboard-controller"
+      ]
+    }
   }
 }

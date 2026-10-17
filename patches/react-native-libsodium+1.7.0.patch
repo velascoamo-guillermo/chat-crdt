@@ -1,7 +1,7 @@
-diff --git a/ios/Libsodium.mm b/ios/Libsodium.mm
+diff --git a/node_modules/react-native-libsodium/ios/Libsodium.mm b/node_modules/react-native-libsodium/ios/Libsodium.mm
 index fbc745de0b351ca6193930a5682e5fa44589e8bf..2c4a428fcb5f7a67eb0f2ded2f4cb459230a819b 100644
---- a/ios/Libsodium.mm
-+++ b/ios/Libsodium.mm
+--- a/node_modules/react-native-libsodium/ios/Libsodium.mm
++++ b/node_modules/react-native-libsodium/ios/Libsodium.mm
 @@ -2,8 +2,18 @@
  #import <React/RCTBridge+Private.h>
  #import <React/RCTUtils.h>

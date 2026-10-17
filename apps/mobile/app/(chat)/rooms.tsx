@@ -96,6 +96,9 @@ export default function RoomsScreen() {
 
       <FlatList
         testID="rooms-list"
+        // SDK 58 lays screen content out under the native header on iOS;
+        // let UIKit inset the list below the navigation bar.
+        contentInsetAdjustmentBehavior="automatic"
         data={rooms}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}

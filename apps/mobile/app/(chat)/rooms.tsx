@@ -118,7 +118,7 @@ export default function RoomsScreen() {
             <Text style={[styles.empty, { color: t.textSecondary }]}>
               No rooms yet — create or join one below.
             </Text>
-          ) : null
+          ) : undefined
         }
       />
 

@@ -1,14 +1,19 @@
 diff --git a/ios/Libsodium.mm b/ios/Libsodium.mm
-index fbc745de0b351ca6193930a5682e5fa44589e8bf..e417b8ea97caaf644e99db6d556e142fb4c97497 100644
+index fbc745de0b351ca6193930a5682e5fa44589e8bf..2c4a428fcb5f7a67eb0f2ded2f4cb459230a819b 100644
 --- a/ios/Libsodium.mm
 +++ b/ios/Libsodium.mm
-@@ -4,6 +4,13 @@
+@@ -2,8 +2,18 @@
+ #import <React/RCTBridge+Private.h>
+ #import <React/RCTUtils.h>
  #import <React/RCTLog.h>
++#import <objc/runtime.h>
  #import "react-native-libsodium.h"
  
 +// React Native 0.88 removed the RCTCxxBridge class. In bridgeless mode the
 +// bridge handed to interop modules is an RCTBridgeProxy, which still exposes
 +// the JSI runtime via -runtime (not declared in its public header).
++// RCTBridgeProxy is an NSProxy, so -respondsToSelector: is forwarded and
++// reports NO for -runtime; check the proxy's own class instead.
 +@protocol LibsodiumRuntimeProvider <NSObject>
 +- (void *)runtime;
 +@end
@@ -16,7 +21,7 @@ index fbc745de0b351ca6193930a5682e5fa44589e8bf..e417b8ea97caaf644e99db6d556e142f
  @implementation Libsodium
  
  @synthesize bridge=_bridge;
-@@ -13,14 +20,20 @@ @implementation Libsodium
+@@ -13,14 +23,20 @@ @implementation Libsodium
  RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(install) {
  
    RCTLogInfo(@"installing libsodium");
@@ -24,7 +29,7 @@ index fbc745de0b351ca6193930a5682e5fa44589e8bf..e417b8ea97caaf644e99db6d556e142f
 -  if (!cxxBridge.runtime) {
 -    RCTLogInfo(@"libsodium install failure: no cxx bridge runtime");
 +  id bridge = self.bridge;
-+  if (![bridge respondsToSelector:@selector(runtime)]) {
++  if (!bridge || !class_respondsToSelector(object_getClass(bridge), @selector(runtime))) {
 +    RCTLogInfo(@"libsodium install failure: bridge does not expose a JSI runtime");
 +    return nil;
 +  }

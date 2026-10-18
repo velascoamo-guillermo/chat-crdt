@@ -9,6 +9,12 @@ export type AppTextInputProps = {
   /** Observable text state. Create with `useNativeState("")`. */
   value: ObservableState<string>;
   onChangeText?: (text: string) => void;
+  /**
+   * Fired when the field gains or loses focus. On Android the field is also
+   * blurred when the soft keyboard hides (Compose keeps focus otherwise, e.g.
+   * after interactive dismiss), so `false` arrives there too.
+   */
+  onFocusChange?: (focused: boolean) => void;
   /** Fired when the keyboard action button (return/send/done) is pressed. */
   onSubmitEditing?: () => void;
   placeholder?: string;

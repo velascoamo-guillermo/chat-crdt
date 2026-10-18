@@ -1,5 +1,8 @@
+import { useEffect, useRef } from "react";
+import { Keyboard } from "react-native";
 import {
   OutlinedTextField,
+  type TextFieldRef,
   Text,
   type TextFieldKeyboardType,
   type TextFieldCapitalization,
@@ -44,6 +47,7 @@ const IME: Record<
 export function AppTextInput({
   value,
   onChangeText,
+  onFocusChange,
   onSubmitEditing,
   placeholder,
   placeholderColor,
@@ -65,8 +69,23 @@ export function AppTextInput({
   const textColor = color ?? t.textPrimary;
   const placeholder_ = placeholderColor ?? t.placeholder;
   const accent = accentColor ?? t.accent;
+  const ref = useRef<TextFieldRef>(null);
+
+  // Compose keeps focus after the IME hides (interactive dismiss, back), so a
+  // focus listener would never see `false`. Blur explicitly on keyboard hide —
+  // only for callers that track focus, to leave other fields untouched.
+  const tracksFocus = onFocusChange !== undefined;
+  useEffect(() => {
+    if (!tracksFocus) return;
+    const sub = Keyboard.addListener("keyboardDidHide", () => {
+      void ref.current?.blur();
+    });
+    return () => sub.remove();
+  }, [tracksFocus]);
   return (
     <OutlinedTextField
+      ref={ref}
+      onFocusChanged={onFocusChange}
       value={value as ComponentProps<typeof OutlinedTextField>["value"]}
       onValueChange={onChangeText}
       autoFocus={autoFocus}

@@ -28,6 +28,7 @@ const CAPITALIZATION = {
 export function AppTextInput({
   value,
   onChangeText,
+  onFocusChange,
   onSubmitEditing,
   placeholder,
   placeholderColor,
@@ -77,6 +78,7 @@ export function AppTextInput({
       <SecureField
         text={value as ComponentProps<typeof SecureField>["text"]}
         onTextChange={onChangeText}
+        onFocusChange={onFocusChange}
         autoFocus={autoFocus}
         placeholder={placeholder}
         modifiers={modifiers}
@@ -90,6 +92,7 @@ export function AppTextInput({
     <TextField
       text={value as ComponentProps<typeof TextField>["text"]}
       onTextChange={onChangeText}
+      onFocusChange={onFocusChange}
       autoFocus={autoFocus}
       placeholder={placeholder}
       axis={multiline ? "vertical" : "horizontal"}

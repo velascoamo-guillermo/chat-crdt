@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import {
   Host,
   Row,
@@ -7,9 +7,20 @@ import {
   AppTextInput,
   useNativeState,
   circleButton,
+  accessibleLabel,
   useUITheme,
+  useChatTheme,
 } from "../ui";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
+import ArrowUp from "@expo/material-symbols/arrow_upward.xml";
+import Lock from "@expo/material-symbols/lock.xml";
+import { sendButtonState, sendButtonVisual, type SendButtonVisual } from "../chat/composerState";
+
+// SF Symbol (iOS) → Material Symbol (Android); a bare SF name renders nothing on Android.
+const ICONS: Record<SendButtonVisual["icon"], { ios: SendButtonVisual["icon"]; android: number }> = {
+  "arrow.up": { ios: "arrow.up", android: ArrowUp },
+  "lock.fill": { ios: "lock.fill", android: Lock },
+};
 
 interface Props {
   onSend: (content: string) => void;
@@ -31,10 +42,17 @@ export const Composer = memo(function Composer({ onSend, sendTyping, disabled = 
   const lastTypingAt = useRef(0);
   const lastActive = useRef(false);
   const t = useUITheme();
+  const chat = useChatTheme();
+  // Only these two booleans live in React state: they flip on empty↔non-empty
+  // and on focus changes, so typing itself never re-renders the composer.
+  const [hasText, setHasText] = useState(false);
+  // Consumed by the pill↔card morph (T7).
+  const [, setFocused] = useState(false);
 
   const handleChange = useCallback(
     (text: string) => {
       const active = text.trim().length > 0;
+      setHasText(active); // bail-out: same value → no re-render
       const now = Date.now();
       // Emit presence on active->inactive transitions, otherwise throttle.
       if (
@@ -63,9 +81,12 @@ export const Composer = memo(function Composer({ onSend, sendTyping, disabled = 
       return;
     }
     draft.value = "";
+    setHasText(false);
     lastActive.current = false;
     sendTyping(false);
   }, [disabled, draft, onSend, sendTyping]);
+
+  const send = sendButtonVisual(sendButtonState({ hasText, gated: disabled }), chat);
 
   return (
     <Host
@@ -78,6 +99,7 @@ export const Composer = memo(function Composer({ onSend, sendTyping, disabled = 
         <AppTextInput
           value={draft}
           onChangeText={handleChange}
+          onFocusChange={setFocused}
           onSubmitEditing={handleSend}
           placeholder="Message…"
           returnKeyType="send"
@@ -85,13 +107,19 @@ export const Composer = memo(function Composer({ onSend, sendTyping, disabled = 
           grow
         />
 
-        {/* Accent-tinted glass circle for send affordance. */}
+        {/* Send circle: muted when empty, accent with text, lock when gated. */}
         <Button
           variant="text"
           onPress={handleSend}
-          modifiers={circleButton(CIRCLE, t.accent)}
+          disabled={!send.enabled}
+          modifiers={[...circleButton(CIRCLE, send.tint), ...accessibleLabel(send.a11yLabel)]}
         >
-          <Icon name="arrow.up" size={20} />
+          <Icon
+            name={ICONS[send.icon]}
+            size={20}
+            color={send.enabled ? chat.accentOn : chat.textSecondary}
+            accessibilityLabel={send.a11yLabel}
+          />
         </Button>
       </Row>
     </Host>

@@ -18,6 +18,7 @@ export {
   grow,
   pillInput,
   pillButton,
+  inlinePillButton,
   circleButton,
   glassPill,
   glassDisc,

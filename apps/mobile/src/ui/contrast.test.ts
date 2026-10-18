@@ -12,6 +12,11 @@ describe('relativeLuminance (WCAG 2.x)', () => {
     expect(relativeLuminance('#AbCdEf')).toBeCloseTo(relativeLuminance('#abcdef'), 10);
   });
 
+  it('accepts 8-digit #RRGGBBAA and ignores alpha (glassFallback tokens)', () => {
+    expect(relativeLuminance('#FFFFFF1F')).toBe(1);
+    expect(relativeLuminance('#00000080')).toBe(0);
+  });
+
   it('throws on malformed input instead of silently returning a number', () => {
     expect(() => relativeLuminance('red')).toThrow();
     expect(() => relativeLuminance('#12345')).toThrow();

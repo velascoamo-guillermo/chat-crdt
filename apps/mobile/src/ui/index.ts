@@ -24,7 +24,6 @@ export {
   type AuthorColors,
 } from './chatTheme';
 export { useChatTheme } from './useChatTheme';
-export { relativeLuminance, contrastRatio } from './contrast';
 export {
   grow,
   pillInput,

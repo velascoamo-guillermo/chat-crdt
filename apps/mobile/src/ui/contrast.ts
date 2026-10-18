@@ -2,7 +2,8 @@
 // palette tests to guarantee author bubbles stay legible (AA ≥ 4.5).
 
 function parseHex(hex: string): [number, number, number] {
-  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex);
+  // Alpha (#RRGGBBAA) is ignored: contrast is computed on the opaque color.
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.length === 9 ? hex.slice(0, 7) : hex);
   if (!m) throw new Error(`Invalid hex color: ${hex}`);
   const h = m[1].length === 3 ? m[1].replace(/./g, (c) => c + c) : m[1];
   return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)) as [number, number, number];

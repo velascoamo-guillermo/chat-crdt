@@ -27,7 +27,7 @@ import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
 import { HeaderAccount, OnlinePill } from "../../src/components/ChatHeader";
 import { Composer } from "../../src/components/Composer";
-import { useUITheme } from "../../src/ui";
+import { useChatTheme } from "../../src/ui";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { computeOrderDigest } from "../../src/utils/orderDigest";
 
@@ -60,7 +60,7 @@ function headerTitle(roomId: string): string {
 // what actually picks up the cipher (contentCipher is fixed at SyncEngine
 // construction — see useSync.ts), hence router.back() below.
 function EnableEncryptionBanner({ roomId }: { roomId: string }) {
-  const t = useUITheme();
+  const t = useChatTheme();
   const enableRoomE2ee = useEnableRoomE2ee();
   const router = useRouter();
   const [state, setState] = useState<"idle" | "enabling" | "error">("idle");
@@ -104,7 +104,7 @@ export default function ChatScreen() {
   const { sendMessage, sendTyping, getAwareness, membership } = useSync(roomId);
   const { typingUsers, onlineCount } = usePresence(getAwareness());
   const router = useRouter();
-  const t = useUITheme();
+  const t = useChatTheme();
   const { top, bottom } = useSafeAreaInsets();
   const headerHeight = top + HEADER_BASE;
 

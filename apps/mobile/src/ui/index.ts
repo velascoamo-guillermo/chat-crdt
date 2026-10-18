@@ -15,6 +15,17 @@ export type { AppTextInputProps } from './AppTextInput.types';
 export { theme, darkTheme, statusColor, type Theme } from './theme';
 export { useUITheme } from './useUITheme';
 export {
+  chatTheme,
+  chatDarkTheme,
+  authorPalette,
+  authorPaletteLight,
+  chatColors,
+  type ChatTheme,
+  type AuthorColors,
+} from './chatTheme';
+export { useChatTheme } from './useChatTheme';
+export { relativeLuminance, contrastRatio } from './contrast';
+export {
   grow,
   pillInput,
   pillButton,

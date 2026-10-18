@@ -1,8 +1,9 @@
 import { Stack } from "expo-router";
-import { useUITheme } from "../../src/ui";
+import { useChatTheme, useUITheme } from "../../src/ui";
 
 export default function ChatLayout() {
   const t = useUITheme();
+  const chat = useChatTheme();
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
@@ -20,7 +21,7 @@ export default function ChatLayout() {
         // duplicate; different roomIds still push distinct entries.
         dangerouslySingular
         options={{
-          contentStyle: { backgroundColor: undefined },
+          contentStyle: { backgroundColor: chat.bg },
           headerStyle: { backgroundColor: "transparent" },
           headerTitleAlign: "center",
         }}

@@ -40,6 +40,8 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isLoading) return;
     const inAuth = segments[0] === "(auth)";
+    // T6 spike: dev routes skip the auth redirect.
+    if ((segments[0] as string) === "(dev)") return;
     if (!token && !inAuth) {
       router.replace("/(auth)/login");
     } else if (token && inAuth) {

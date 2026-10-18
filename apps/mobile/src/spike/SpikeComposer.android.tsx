@@ -2,9 +2,11 @@
 // One Host, one BasicTextField at a stable tree position. The container
 // Column animates its own size (animateContentSize); the toolbar row and the
 // inline send button enter/leave via AnimatedVisibility.
-import { useCallback, useEffect, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
+import { Keyboard } from "react-native";
 import {
   Host,
+  Box,
   Column,
   Row,
   BasicTextField,
@@ -12,6 +14,7 @@ import {
   EnterTransition,
   ExitTransition,
   IconButton,
+  type TextFieldRef,
   Icon,
   Text,
   Spacer,
@@ -22,6 +25,7 @@ import {
   background,
   border,
   clip,
+  fillMaxSize,
   fillMaxWidth,
   padding,
   paddingAll,
@@ -35,6 +39,12 @@ import type { SpikeComposerProps } from "./SpikeComposer.types";
 
 const ACCENT = "#D97757";
 const SURFACE = "#2A2A2C";
+// Spike variant switch: true = container animateContentSize (run 1),
+// false = size driven only by AnimatedVisibility expand/shrink (run 2).
+const USE_ANIMATE_CONTENT_SIZE = true;
+// Run 3: fixed-height Host (no matchContents) with the card bottom-aligned in
+// a fillMaxSize Box, so the RN frame never has to follow the animation.
+const FIXED_HOST_HEIGHT = 170;
 
 function ProbedTextField({ onMount, ...props }: ComponentProps<typeof BasicTextField> & { onMount: () => void }) {
   useEffect(onMount, [onMount]);
@@ -46,6 +56,16 @@ export function SpikeComposer({ e2ee, animated, onFieldMount, onSend }: SpikeCom
   const [focused, setFocused] = useState(false);
   const [hasText, setHasText] = useState(false);
   const expanded = focused || hasText;
+  const fieldRef = useRef<TextFieldRef>(null);
+
+  // Compose keeps focus after the IME hides (interactive dismiss / back), so
+  // an empty card would never collapse. Blur explicitly on keyboard hide.
+  useEffect(() => {
+    const sub = Keyboard.addListener("keyboardDidHide", () => {
+      void fieldRef.current?.blur();
+    });
+    return () => sub.remove();
+  }, []);
 
   const handleChange = useCallback((v: string) => {
     const next = v.trim().length > 0;
@@ -75,19 +95,21 @@ export function SpikeComposer({ e2ee, animated, onFieldMount, onSend }: SpikeCom
   const exitH = animated ? ExitTransition.shrinkHorizontally().plus(ExitTransition.fadeOut()) : exit;
 
   return (
-    <Host matchContents={{ vertical: true }} style={{ marginHorizontal: 12 }}>
+    <Host pointerEvents="box-none" style={{ marginHorizontal: 12, height: FIXED_HOST_HEIGHT }}>
+      <Box contentAlignment="bottomCenter" modifiers={[fillMaxSize()]}>
       <Column
         modifiers={[
           fillMaxWidth(),
           clip(Shapes.RoundedCorner(24)),
           background(SURFACE),
           border(1, "#FFFFFF1A"),
-          ...(animated ? [animateContentSize(0.82, 600)] : []),
+          ...(animated && USE_ANIMATE_CONTENT_SIZE ? [animateContentSize(0.82, 600)] : []),
           padding(16, 7, 8, 7),
         ]}
       >
         <Row verticalAlignment="center">
           <ProbedTextField
+            ref={fieldRef}
             onMount={onFieldMount}
             value={text}
             onValueChange={handleChange}
@@ -124,6 +146,7 @@ export function SpikeComposer({ e2ee, animated, onFieldMount, onSend }: SpikeCom
           </Row>
         </AnimatedVisibility>
       </Column>
+      </Box>
     </Host>
   );
 }

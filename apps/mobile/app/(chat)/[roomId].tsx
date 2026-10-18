@@ -205,9 +205,11 @@ export default function ChatScreen() {
 
       {/* Soft scroll-edge fade pinned to the bottom safe-area strip: messages
           stay visible but dissolve into the bg as they slide past the composer
-          into the home-indicator zone. Sits under the floating glass composer. */}
+          into the home-indicator zone. Sits under the floating glass composer.
+          Fade from a zero-alpha bg, not "transparent" (black): interpolating
+          from black leaves a grey band on the light canvas. */}
       <LinearGradient
-        colors={["transparent", t.bg]}
+        colors={[`${t.bg}00`, t.bg]}
         style={[styles.edge, { height: bottom + 24 }]}
         pointerEvents="none"
       />

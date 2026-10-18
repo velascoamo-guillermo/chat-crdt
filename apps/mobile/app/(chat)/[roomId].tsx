@@ -22,6 +22,8 @@ import { useSync } from "../../src/hooks/useSync";
 import { useEnableRoomE2ee } from "../../src/hooks/useE2ee";
 import { isComposerReady } from "../../src/crypto/composerGate";
 import { MessageItem } from "../../src/components/MessageItem";
+import { groupPosition, GROUP_GAP_MS } from "../../src/chat/groupMessages";
+import { useAuthStore } from "../../src/store/auth.store";
 import { ChatScrollView } from "../../src/components/ChatScrollView";
 import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
@@ -100,6 +102,7 @@ export default function ChatScreen() {
   const { roomId: roomIdParam } = useLocalSearchParams<{ roomId: string }>();
   const roomId = roomIdParam ?? "default";
   const messages = useRoomMessages(roomId);
+  const myUserId = useAuthStore((s) => s.user?.id);
   const wsStatus = useRoomWsStatus(roomId);
   const { sendMessage, sendTyping, getAwareness, membership } = useSync(roomId);
   const { typingUsers, onlineCount } = usePresence(getAwareness());
@@ -190,7 +193,17 @@ export default function ChatScreen() {
       <View style={styles.list}>
         <FlashList
           data={messages}
-          renderItem={({ item }) => <MessageItem message={item} />}
+          renderItem={({ item, index }) => {
+            const g = groupPosition(messages[index - 1], item, messages[index + 1], GROUP_GAP_MS, myUserId);
+            return (
+              <MessageItem
+                message={item}
+                showAuthor={g.showAuthor}
+                isFirstInGroup={g.isFirst}
+                isLastInGroup={g.isLast}
+              />
+            );
+          }}
           keyExtractor={(item) => item.id}
           maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
           renderScrollComponent={renderScrollComponent}

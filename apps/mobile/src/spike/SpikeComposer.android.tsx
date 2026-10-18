@@ -6,7 +6,6 @@ import { useCallback, useEffect, useRef, useState, type ComponentProps } from "r
 import { Keyboard } from "react-native";
 import {
   Host,
-  Box,
   Column,
   Row,
   BasicTextField,
@@ -25,7 +24,6 @@ import {
   background,
   border,
   clip,
-  fillMaxSize,
   fillMaxWidth,
   padding,
   paddingAll,
@@ -42,9 +40,8 @@ const SURFACE = "#2A2A2C";
 // Spike variant switch: true = container animateContentSize (run 1),
 // false = size driven only by AnimatedVisibility expand/shrink (run 2).
 const USE_ANIMATE_CONTENT_SIZE = true;
-// Run 3: fixed-height Host (no matchContents) with the card bottom-aligned in
-// a fillMaxSize Box, so the RN frame never has to follow the animation.
-const FIXED_HOST_HEIGHT = 170;
+// Run 3 (fixed-height Host + bottomCenter fillMaxSize Box) was tried and
+// dropped: the Box measured past the host and the card clipped off-screen.
 
 function ProbedTextField({ onMount, ...props }: ComponentProps<typeof BasicTextField> & { onMount: () => void }) {
   useEffect(onMount, [onMount]);
@@ -95,8 +92,7 @@ export function SpikeComposer({ e2ee, animated, onFieldMount, onSend }: SpikeCom
   const exitH = animated ? ExitTransition.shrinkHorizontally().plus(ExitTransition.fadeOut()) : exit;
 
   return (
-    <Host pointerEvents="box-none" style={{ marginHorizontal: 12, height: FIXED_HOST_HEIGHT }}>
-      <Box contentAlignment="bottomCenter" modifiers={[fillMaxSize()]}>
+    <Host matchContents={{ vertical: true }} style={{ marginHorizontal: 12 }}>
       <Column
         modifiers={[
           fillMaxWidth(),
@@ -146,7 +142,6 @@ export function SpikeComposer({ e2ee, animated, onFieldMount, onSend }: SpikeCom
           </Row>
         </AnimatedVisibility>
       </Column>
-      </Box>
     </Host>
   );
 }

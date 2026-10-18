@@ -4,6 +4,7 @@ import type { MessageDto } from "@chat-crdt/shared";
 import { useAuthStore } from "../store/auth.store";
 import { useChatTheme } from "../ui";
 import { authorColors } from "../chat/authorColor";
+import { MUTED_TEXT_OPACITY } from "../chat/bubbleStyle";
 import { useRoomCrypto, useRoomPendingEpochsForMe } from "../store/chat.store";
 import { useRoomsStore } from "../store/rooms.store";
 import { resolveMessageRenderState } from "../crypto/renderState";
@@ -118,6 +119,6 @@ const styles = StyleSheet.create({
   },
   content: { fontSize: 16, lineHeight: 22 },
   // E2EE waiting/unavailable: same geometry, muted italic.
-  contentMuted: { fontStyle: "italic", opacity: 0.7 },
+  contentMuted: { fontStyle: "italic", opacity: MUTED_TEXT_OPACITY },
   time: { fontSize: 11, marginTop: 4, marginHorizontal: 12 },
 });

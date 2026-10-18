@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { relativeLuminance, contrastRatio } from './contrast';
+import { relativeLuminance, contrastRatio, blendOver } from './contrast';
 
 describe('relativeLuminance (WCAG 2.x)', () => {
   it('is 0 for black and 1 for white', () => {
@@ -35,5 +35,17 @@ describe('contrastRatio (WCAG 2.x)', () => {
 
   it('is ~4.48 for #777777 on white (classic just-below-AA vector)', () => {
     expect(contrastRatio('#777777', '#ffffff')).toBeCloseTo(4.48, 2);
+  });
+});
+
+describe('blendOver (alpha composite)', () => {
+  it('returns the background at alpha 0 and the foreground at alpha 1', () => {
+    expect(blendOver('#ffffff', '#000000', 0)).toBe('#000000');
+    expect(blendOver('#ffffff', '#000000', 1)).toBe('#ffffff');
+  });
+
+  it('mixes channels linearly in sRGB (what RN opacity renders)', () => {
+    expect(blendOver('#ffffff', '#000000', 0.5)).toBe('#808080');
+    expect(blendOver('#F5F4EF', '#4A2C2A', 0.7)).toBe('#c2b8b4');
   });
 });

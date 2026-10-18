@@ -24,3 +24,15 @@ export function contrastRatio(a: string, b: string): number {
   const lb = relativeLuminance(b);
   return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
 }
+
+/** Composite `fg` at `alpha` over opaque `bg` (sRGB, like RN `opacity`). */
+export function blendOver(fg: string, bg: string, alpha: number): string {
+  const f = parseHex(fg);
+  const b = parseHex(bg);
+  return (
+    '#' +
+    f
+      .map((c, i) => Math.round(c * alpha + b[i] * (1 - alpha)).toString(16).padStart(2, '0'))
+      .join('')
+  );
+}

@@ -1,7 +1,6 @@
 import { memo } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import type { MessageDto } from "@chat-crdt/shared";
-import { useAuthStore } from "../store/auth.store";
 import { useChatTheme } from "../ui";
 import { authorColors } from "../chat/authorColor";
 import { MUTED_TEXT_OPACITY } from "../chat/bubbleStyle";
@@ -11,6 +10,8 @@ import { resolveMessageRenderState } from "../crypto/renderState";
 
 interface Props {
   message: MessageDto;
+  /** Sent by the signed-in user (resolved once by the screen). */
+  isOwn: boolean;
   /** Author name above this bubble — first of a group, never own messages. */
   showAuthor?: boolean;
   isFirstInGroup?: boolean;
@@ -20,12 +21,11 @@ interface Props {
 
 export const MessageItem = memo(function MessageItem({
   message,
+  isOwn,
   showAuthor = true,
   isFirstInGroup = true,
   isLastInGroup = true,
 }: Props) {
-  const myUserId = useAuthStore((s) => s.user?.id);
-  const isOwn = message.userId === myUserId;
   const c = useChatTheme();
   const author = authorColors(message.userId, c.authors);
 

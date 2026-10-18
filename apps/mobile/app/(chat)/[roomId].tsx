@@ -198,6 +198,7 @@ export default function ChatScreen() {
             return (
               <MessageItem
                 message={item}
+                isOwn={item.userId === myUserId}
                 showAuthor={g.showAuthor}
                 isFirstInGroup={g.isFirst}
                 isLastInGroup={g.isLast}

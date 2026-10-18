@@ -71,6 +71,21 @@ export function pillButton(tint = "#FFFFFF") {
   ];
 }
 
+// Pill button meant to sit beside a growing sibling in a Row. On Android the
+// regular pillButton() applies fillMaxWidth(), so in a Row each button claims
+// the full incoming max width and the weight(1) sibling (e.g. a text field) is
+// left with ~0px. Use fixed-size pills there instead; iOS is unchanged.
+export function inlinePillButton(tint = "#FFFFFF") {
+  if (Platform.OS === "android") {
+    return [
+      size(56, 48),
+      clip(Shapes.RoundedCorner(24)),
+      background(withAlpha(tint, "2E")),
+    ];
+  }
+  return pillButton(tint);
+}
+
 // Small liquid glass capsule for header chips (e.g. the presence pill).
 // Android fakes it with a translucent rounded surface + hairline border.
 export function glassPill() {

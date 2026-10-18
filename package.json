@@ -10,15 +10,17 @@
     "build": "turbo build",
     "test": "turbo test",
     "lint": "turbo lint",
-    "typecheck": "turbo typecheck"
+    "typecheck": "turbo typecheck",
+    "postinstall": "patch-package"
   },
   "packageManager": "bun@1.2.20",
   "trustedDependencies": ["bcrypt", "react-native-libsodium", "unrs-resolver"],
   "devDependencies": {
     "@eslint/js": "^9",
     "eslint": "^9",
-    "eslint-config-expo": "^57.0.2",
+    "eslint-config-expo": "^58.0.4",
     "globals": "^17.6.0",
+    "patch-package": "^8.0.1",
     "turbo": "^2.5.0",
     "typescript": "^5.8.0",
     "typescript-eslint": "^8.61.0"

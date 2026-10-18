@@ -1,0 +1,49 @@
+diff --git a/node_modules/react-native-libsodium/ios/Libsodium.mm b/node_modules/react-native-libsodium/ios/Libsodium.mm
+index fbc745de0b351ca6193930a5682e5fa44589e8bf..2c4a428fcb5f7a67eb0f2ded2f4cb459230a819b 100644
+--- a/node_modules/react-native-libsodium/ios/Libsodium.mm
++++ b/node_modules/react-native-libsodium/ios/Libsodium.mm
+@@ -2,8 +2,18 @@
+ #import <React/RCTBridge+Private.h>
+ #import <React/RCTUtils.h>
+ #import <React/RCTLog.h>
++#import <objc/runtime.h>
+ #import "react-native-libsodium.h"
+ 
++// React Native 0.88 removed the RCTCxxBridge class. In bridgeless mode the
++// bridge handed to interop modules is an RCTBridgeProxy, which still exposes
++// the JSI runtime via -runtime (not declared in its public header).
++// RCTBridgeProxy is an NSProxy, so -respondsToSelector: is forwarded and
++// reports NO for -runtime; check the proxy's own class instead.
++@protocol LibsodiumRuntimeProvider <NSObject>
++- (void *)runtime;
++@end
++
+ @implementation Libsodium
+ 
+ @synthesize bridge=_bridge;
+@@ -13,14 +23,20 @@ @implementation Libsodium
+ RCT_EXPORT_BLOCKING_SYNCHRONOUS_METHOD(install) {
+ 
+   RCTLogInfo(@"installing libsodium");
+-  RCTCxxBridge *cxxBridge = (RCTCxxBridge *)self.bridge;
+-  if (!cxxBridge.runtime) {
+-    RCTLogInfo(@"libsodium install failure: no cxx bridge runtime");
++  id bridge = self.bridge;
++  if (!bridge || !class_respondsToSelector(object_getClass(bridge), @selector(runtime))) {
++    RCTLogInfo(@"libsodium install failure: bridge does not expose a JSI runtime");
++    return nil;
++  }
++
++  void *runtime = [(id<LibsodiumRuntimeProvider>)bridge runtime];
++  if (!runtime) {
++    RCTLogInfo(@"libsodium install failure: no JSI runtime");
+     return nil;
+   }
+ 
+-  RCTLogInfo(@"calling installLibsodium with cxx bridge runtime");
+-  ReactNativeLibsodium::installLibsodium(*(facebook::jsi::Runtime *)cxxBridge.runtime);
++  RCTLogInfo(@"calling installLibsodium with JSI runtime");
++  ReactNativeLibsodium::installLibsodium(*(facebook::jsi::Runtime *)runtime);
+   return nil;
+ }
+ 

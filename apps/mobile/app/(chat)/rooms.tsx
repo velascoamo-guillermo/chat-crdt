@@ -11,7 +11,7 @@ import {
   AppTextInput,
   useNativeState,
   useUITheme,
-  pillButton,
+  inlinePillButton,
 } from "../../src/ui";
 
 // Room list: create + join flows against the server's REST endpoints
@@ -96,6 +96,9 @@ export default function RoomsScreen() {
 
       <FlatList
         testID="rooms-list"
+        // SDK 58 lays screen content out under the native header on iOS;
+        // let UIKit inset the list below the navigation bar.
+        contentInsetAdjustmentBehavior="automatic"
         data={rooms}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
@@ -118,7 +121,7 @@ export default function RoomsScreen() {
             <Text style={[styles.empty, { color: t.textSecondary }]}>
               No rooms yet — create or join one below.
             </Text>
-          ) : null
+          ) : undefined
         }
       />
 
@@ -134,10 +137,10 @@ export default function RoomsScreen() {
       <Host matchContents={{ vertical: true }} style={{ paddingBottom: bottom + 12 }}>
         <Row spacing={12} alignment="center" style={{ padding: 12 }}>
           <AppTextInput value={nameDraft} placeholder="room-name" grow />
-          <Button variant="text" onPress={handleJoin} modifiers={pillButton(t.surface)}>
+          <Button variant="text" onPress={handleJoin} modifiers={inlinePillButton(t.surface)}>
             <Icon name="arrow.right.circle" size={18} color={t.textPrimary} />
           </Button>
-          <Button variant="text" onPress={handleCreate} modifiers={pillButton(t.accent)}>
+          <Button variant="text" onPress={handleCreate} modifiers={inlinePillButton(t.accent)}>
             <Icon name="plus" size={18} color="#ffffff" />
           </Button>
         </Row>

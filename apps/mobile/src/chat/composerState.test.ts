@@ -34,21 +34,22 @@ describe('sendButtonState', () => {
 });
 
 describe('sendButtonVisual', () => {
-  for (const theme of [chatDarkTheme, chatTheme]) {
-    it('ready: accent arrow, enabled, labelled "Up" (Maestro tapOn contract)', () => {
+  for (const [name, theme] of [['dark', chatDarkTheme], ['light', chatTheme]] as const) {
+    it(`${name} ready: accent arrow, enabled, labelled "Up" (Maestro tapOn contract)`, () => {
       const v = sendButtonVisual('ready', theme);
       expect(v.a11yLabel).toBe('Up');
       expect(v.icon).toBe('arrow.up');
       expect(v.tint).toBe(theme.accent);
       expect(v.enabled).toBe(true);
     });
-    it('empty: arrow, disabled, muted (not accent)', () => {
+    it(`${name} empty: arrow, disabled, muted (not accent), still labelled "Up"`, () => {
       const v = sendButtonVisual('empty', theme);
+      expect(v.a11yLabel).toBe('Up');
       expect(v.icon).toBe('arrow.up');
       expect(v.enabled).toBe(false);
       expect(v.tint).not.toBe(theme.accent);
     });
-    it('gated: lock glyph, disabled, muted, distinct label', () => {
+    it(`${name} gated: lock glyph, disabled, muted, distinct label`, () => {
       const v = sendButtonVisual('gated', theme);
       expect(v.icon).toBe('lock.fill');
       expect(v.enabled).toBe(false);

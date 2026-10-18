@@ -46,13 +46,18 @@ export const Composer = memo(function Composer({ onSend, sendTyping, disabled = 
   // Only these two booleans live in React state: they flip on empty↔non-empty
   // and on focus changes, so typing itself never re-renders the composer.
   const [hasText, setHasText] = useState(false);
+  // Mirrors hasText so handleChange only calls setHasText on an actual flip.
+  const hasTextRef = useRef(false);
   // Consumed by the pill↔card morph (T7).
   const [, setFocused] = useState(false);
 
   const handleChange = useCallback(
     (text: string) => {
       const active = text.trim().length > 0;
-      setHasText(active); // bail-out: same value → no re-render
+      if (active !== hasTextRef.current) {
+        hasTextRef.current = active;
+        setHasText(active);
+      }
       const now = Date.now();
       // Emit presence on active->inactive transitions, otherwise throttle.
       if (
@@ -81,6 +86,7 @@ export const Composer = memo(function Composer({ onSend, sendTyping, disabled = 
       return;
     }
     draft.value = "";
+    hasTextRef.current = false;
     setHasText(false);
     lastActive.current = false;
     sendTyping(false);

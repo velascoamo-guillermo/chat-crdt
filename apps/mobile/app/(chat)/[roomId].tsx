@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,7 +8,8 @@ import {
   type LayoutChangeEvent,
   type ScrollViewProps,
 } from "react-native";
-import { FlashList } from "@shopify/flash-list";
+import { FlashList, type FlashListRef } from "@shopify/flash-list";
+import type { MessageDto } from "@chat-crdt/shared";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   KeyboardGestureArea,
@@ -29,6 +30,7 @@ import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
 import { EmptyRoom } from "../../src/components/EmptyRoom";
 import { showEmptyRoom } from "../../src/chat/emptyRoomGate";
+import { shouldReanchor } from "../../src/chat/listAnchor";
 import { HeaderAccount, HeaderRoomPill, HeaderRoomsDisc } from "../../src/components/ChatHeader";
 import { roomLabel, backAction } from "../../src/chat/headerPill";
 import { Composer } from "../../src/components/Composer";
@@ -37,9 +39,13 @@ import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { computeOrderDigest } from "../../src/utils/orderDigest";
 
 const LIST_PADDING = 8;
+
 // Native stack header content height (excludes the status-bar/safe area, which
 // we add separately from the top inset). iOS 44, Android 56.
 const HEADER_BASE = Platform.OS === "ios" ? 44 : 56;
+
+// The part of the mounted ScrollView instance the re-anchor uses.
+type NativeScroller = { scrollToEnd: (options?: { animated?: boolean }) => void };
 
 // QA-only readout for the Maestro E2E offline-sync flow (apps/mobile/.maestro).
 // Requires BOTH __DEV__ (never true in a release build, regardless of env
@@ -125,13 +131,42 @@ export default function ChatScreen() {
   const [composerHeight, setComposerHeight] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
 
+  // The composer stack (banners, typing row, pill/card) floats over the list
+  // and its height is the list's bottom padding. When it grows or shrinks while
+  // the reader is at the end, scroll back to the end so the last bubble stays
+  // above it instead of sliding underneath.
+  const listRef = useRef<FlashListRef<MessageDto>>(null);
+  // False until the scroll view reports (onEndVisible fires once after it is
+  // measured), so mount-time layouts never fight startRenderingFromBottom.
+  const atEndRef = useRef(false);
+  const lastComposerHeight = useRef(0);
+
   const handleComposerLayout = useCallback((e: LayoutChangeEvent) => {
-    setComposerHeight(e.nativeEvent.layout.height);
+    const next = e.nativeEvent.layout.height;
+    const reanchor = shouldReanchor({
+      atEnd: atEndRef.current,
+      prevHeight: lastComposerHeight.current,
+      nextHeight: next,
+    });
+    lastComposerHeight.current = next;
+    setComposerHeight(next);
+    // Native scroll view, not FlashList.scrollToEnd: the latter computes its
+    // target from estimated item sizes and lands mid-list on Android.
+    if (reanchor) {
+      // getNativeScrollRef() is typed as the component, but returns the
+      // mounted ScrollView instance (our ChatScrollView).
+      const scroller = listRef.current?.getNativeScrollRef() as unknown as NativeScroller | null;
+      requestAnimationFrame(() => scroller?.scrollToEnd({ animated: true }));
+    }
+  }, []);
+
+  const handleEndVisible = useCallback((visible: boolean) => {
+    atEndRef.current = visible;
   }, []);
 
   const renderScrollComponent = useCallback(
-    (props: ScrollViewProps) => <ChatScrollView {...props} />,
-    [],
+    (props: ScrollViewProps) => <ChatScrollView {...props} onEndVisible={handleEndVisible} />,
+    [handleEndVisible],
   );
 
   // Left disc: pop back to Rooms, or — on a cold start straight into a room
@@ -201,6 +236,7 @@ export default function ChatScreen() {
 
       <View style={styles.list}>
         <FlashList
+          ref={listRef}
           data={messages}
           renderItem={({ item, index }) => {
             const g = groupPosition(messages[index - 1], item, messages[index + 1], GROUP_GAP_MS, myUserId);

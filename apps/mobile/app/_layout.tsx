@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { LogBox } from "react-native";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -10,6 +11,13 @@ import { ensureIdentityPublished, type KeyFlowsContext } from "../src/crypto/key
 
 const API = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3001";
 const identityKeyStore = new RoomKeyStore(secureStoreBackend);
+
+// Maestro E2E runs only (same opt-in as the chat QA readout, see [roomId].tsx):
+// a LogBox toast sits over the composer and swallows taps on "Message…".
+// Warnings still reach the Metro console.
+if (__DEV__ && process.env.EXPO_PUBLIC_QA_READOUT === "1") {
+  LogBox.ignoreAllLogs(true);
+}
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { token, isLoading, loadFromStorage } = useAuthStore();

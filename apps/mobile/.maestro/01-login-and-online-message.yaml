@@ -48,6 +48,12 @@ appId: com.chatcrdt.app
 ---
 - launchApp:
     clearState: true
+# `runFlow.when` checks once, without waiting: on a cold dev-client launch the
+# bundle may still be loading, the guard is skipped, and the app then lands in
+# the chat (Keychain session) with no Email field. Wait for either screen first.
+- extendedWaitUntil:
+    visible: "(Email|# general.*)"
+    timeout: 60000
 - runFlow:
     when:
       visible: "# general.*"
@@ -59,6 +65,11 @@ appId: com.chatcrdt.app
 - tapOn: "Password"
 - inputText: "password123"
 - tapOn: "Login"
+# iOS may raise the system "Save password?" sheet after login; it hides the app's
+# accessibility tree until dismissed. Locale-agnostic for the en/es simulators.
+- tapOn:
+    text: "(Not Now|Ahora no)"
+    optional: true
 - assertVisible: "# general.*"
 - extendedWaitUntil:
     visible: "connected"

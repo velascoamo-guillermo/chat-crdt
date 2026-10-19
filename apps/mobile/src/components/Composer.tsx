@@ -10,8 +10,8 @@ import {
   glassChip,
   accessibleLabel,
   useChatTheme,
+  ComposerSurface,
 } from "../ui";
-import { ComposerSurface } from "./ComposerSurface";
 import ArrowUp from "@expo/material-symbols/arrow_upward.xml";
 import Lock from "@expo/material-symbols/lock.xml";
 import {

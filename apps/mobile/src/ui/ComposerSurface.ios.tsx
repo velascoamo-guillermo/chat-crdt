@@ -1,6 +1,6 @@
 import { Host, VStack, HStack, Spacer } from "@expo/ui/swift-ui";
 import { animation, Animation } from "@expo/ui/swift-ui/modifiers";
-import { composerCard, composerPill } from "../ui";
+import { composerCard, composerPill } from "./modifiers";
 import type { ComposerSurfaceProps } from "./ComposerSurface.types";
 
 const SPRING = Animation.spring({ response: 0.38, dampingFraction: 0.82 });

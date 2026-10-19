@@ -3,7 +3,7 @@ import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { Host, Column, Row, Spacer } from "@expo/ui/jetpack-compose";
 import { weight } from "@expo/ui/jetpack-compose/modifiers";
-import { composerCard, composerPill } from "../ui";
+import { composerCard, composerPill } from "./modifiers";
 import { composerHeightStep } from "../chat/composerState";
 import type { ComposerSurfaceProps } from "./ComposerSurface.types";
 

@@ -147,15 +147,11 @@ export function decorative() {
 
 // Circular liquid glass icon button. Defaults to a neutral white tint; pass a
 // color (e.g. the accent) to tint the glass — used to give the send button affordance.
-// `interactive` glass reacts to press on iOS; Android approximates with a
-// translucent tinted circle + border.
+// `interactive` glass reacts to press on iOS; Android paints a solid circle in the
+// tint: a translucent tint washed the "ready" accent out next to the muted state.
 export function circleButton(size_ = 44, tint = "#FFFFFF") {
   if (Platform.OS === "android") {
-    return [
-      size(size_, size_),
-      clip(Shapes.Circle),
-      background(withAlpha(tint, "2E")),
-    ];
+    return [size(size_, size_), clip(Shapes.Circle), background(tint)];
   }
   return [
     buttonStyle("plain"),
@@ -164,5 +160,50 @@ export function circleButton(size_ = 44, tint = "#FFFFFF") {
       glass: { variant: "regular", tint, interactive: true },
       shape: "circle",
     }),
+  ];
+}
+
+// Composer shell, collapsed: a capsule-height glass rounded rectangle (a ~48pt
+// tall r=24 rect IS a capsule, so pill and card share one shape and only the
+// size animates). Android: padding only; the RN height wrapper draws the
+// surface (see ComposerSurface.android.tsx).
+export function composerPill() {
+  if (Platform.OS === "android") {
+    return [fillMaxWidth(), composePadding(16, 6, 6, 6)];
+  }
+  return [
+    padding({ leading: 16, trailing: 6, top: 6, bottom: 6 }),
+    frame({ maxWidth: Infinity, alignment: "leading" }),
+    glassEffect({ glass: { variant: "regular" }, shape: "roundedRectangle", cornerRadius: 24 }),
+  ];
+}
+
+// Composer shell, expanded: same glass shape as composerPill(), roomier insets
+// for the field row + toolbar row.
+export function composerCard() {
+  if (Platform.OS === "android") {
+    return [fillMaxWidth(), composePadding(16, 12, 8, 8)];
+  }
+  return [
+    padding({ leading: 16, trailing: 8, top: 12, bottom: 8 }),
+    frame({ maxWidth: Infinity, alignment: "leading" }),
+    glassEffect({ glass: { variant: "regular" }, shape: "roundedRectangle", cornerRadius: 24 }),
+  ];
+}
+
+// Small display-only glass capsule for the composer's E2EE chip. Android fakes
+// it with the `glassFallback` fill + hairline border.
+export function glassChip(fallback: GlassFallback) {
+  if (Platform.OS === "android") {
+    return [
+      clip(Shapes.RoundedCorner(14)),
+      background(fallback.fill),
+      border(1, fallback.border),
+      composePadding(10, 6, 10, 6),
+    ];
+  }
+  return [
+    padding({ horizontal: 10, vertical: 6 }),
+    glassEffect({ glass: { variant: "regular" }, shape: "capsule" }),
   ];
 }

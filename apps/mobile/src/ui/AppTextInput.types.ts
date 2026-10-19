@@ -38,4 +38,13 @@ export type AppTextInputProps = {
    * Material-style rounded border outline. @default true
    */
   glassEffect?: boolean;
+  /**
+   * No chrome at all: no glass, border or outline. For fields that sit on a
+   * surface the caller draws (the composer card). Wins over `glassEffect`.
+   * Android renders a `BasicTextField` instead of the outlined Material field.
+   * @default false
+   */
+  bare?: boolean;
+  /** Maximum visible lines before a multiline field scrolls. Android only. */
+  maxLines?: number;
 };

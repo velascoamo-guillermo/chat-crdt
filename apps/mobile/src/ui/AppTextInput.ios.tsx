@@ -43,14 +43,18 @@ export function AppTextInput({
   autoFocus = false,
   grow = false,
   glassEffect = true,
+  bare = false,
 }: AppTextInputProps) {
   // Only force `tint` (accent). Leave text/placeholder unset so SwiftUI uses
   // its system semantic colors (`Color.primary` / secondary), which adapt to
   // light/dark mode automatically. Callers can still override per-field.
   const modifiers: ModifierConfig[] = [tint(accentColor), font({ size: fontSize })];
   if (color) modifiers.push(foregroundStyle(color));
-  // Glass capsule (default) vs Material-style rounded border outline.
-  if (glassEffect) {
+  // Bare (caller draws the surface) vs glass capsule (default) vs
+  // Material-style rounded border outline.
+  if (bare) {
+    modifiers.push(textFieldStyle("plain"));
+  } else if (glassEffect) {
     modifiers.push(
       padding({ horizontal: 16, vertical: 12 }),
       glassEffectModifier({

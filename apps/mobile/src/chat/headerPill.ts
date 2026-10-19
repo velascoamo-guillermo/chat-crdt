@@ -45,3 +45,25 @@ export const PILL_SLOT_MAX = 280;
 export function pillSlotWidth(screenWidth: number): number {
   return Math.max(0, Math.min(screenWidth - 2 * DISC_SIDE, PILL_SLOT_MAX));
 }
+
+export function truncateLabel(label: string, maxChars: number): string {
+  return label.length <= maxChars ? label : `${label.slice(0, maxChars - 1)}…`;
+}
+
+// Pill chrome around the room name: 2×12 horizontal padding + the
+// " · ● 99 online" status run (~100pt at 13pt). Room name is 15pt semibold,
+// ~8.6pt per glyph for [a-z0-9-]. Estimates — the native text also tail-truncates
+// as a backstop, but that would eat the status run first, hence this budget.
+const PILL_CHROME = 124;
+const ROOM_CHAR_W = 8.6;
+const MIN_ROOM_CHARS = 6;
+
+/** Max chars of the room label (incl. "# ") that fit in a pill slot of `slotWidth`. */
+export function roomCharBudget(slotWidth: number): number {
+  return Math.max(MIN_ROOM_CHARS, Math.floor((slotWidth - PILL_CHROME) / ROOM_CHAR_W));
+}
+
+/** Room label as shown in the pill: truncated with "…" so the status run always fits. */
+export function pillRoomLabel(roomId: string, slotWidth: number): string {
+  return truncateLabel(roomLabel(roomId), roomCharBudget(slotWidth));
+}

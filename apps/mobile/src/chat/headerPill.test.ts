@@ -7,6 +7,9 @@ import {
   backAction,
   pillSlotWidth,
   PILL_SLOT_MAX,
+  truncateLabel,
+  roomCharBudget,
+  pillRoomLabel,
 } from './headerPill';
 
 describe('roomLabel', () => {
@@ -74,5 +77,48 @@ describe('pillSlotWidth', () => {
   });
   it('never goes negative', () => {
     expect(pillSlotWidth(100)).toBe(0);
+  });
+});
+
+describe('truncateLabel', () => {
+  it('keeps a label that fits', () => {
+    expect(truncateLabel('# general', 9)).toBe('# general');
+  });
+  it('cuts with a trailing ellipsis to exactly maxChars', () => {
+    const out = truncateLabel('# abcdefghijklmnop', 8);
+    expect(out).toBe('# abcde…');
+    expect(out.length).toBe(8);
+  });
+});
+
+describe('roomCharBudget', () => {
+  it('grows with the slot', () => {
+    expect(roomCharBudget(280)).toBeGreaterThan(roomCharBudget(200));
+  });
+  it('fits "# general" on a 390pt phone', () => {
+    expect(roomCharBudget(pillSlotWidth(390))).toBeGreaterThanOrEqual('# general'.length);
+  });
+  it('never drops below a readable floor', () => {
+    expect(roomCharBudget(0)).toBe(6);
+  });
+});
+
+describe('pillRoomLabel', () => {
+  // Server allows room names up to 64 chars ([a-z0-9-]+).
+  const long40 = 'a'.repeat(40);
+  const long64 = 'b'.repeat(64);
+  it('leaves short rooms intact', () => {
+    expect(pillRoomLabel('default', pillSlotWidth(390))).toBe('# general');
+  });
+  it.each([
+    [long40, 390],
+    [long64, 390],
+    [long64, 1024],
+  ])('truncates %s within the slot budget (screen %p)', (room, screen) => {
+    const slot = pillSlotWidth(screen);
+    const out = pillRoomLabel(room, slot);
+    expect(out.length).toBe(roomCharBudget(slot));
+    expect(out.endsWith('…')).toBe(true);
+    expect(out.startsWith('# ')).toBe(true);
   });
 });

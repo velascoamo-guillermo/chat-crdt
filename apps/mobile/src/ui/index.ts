@@ -39,3 +39,7 @@ export { SpanText } from './SpanText';
 export type { TextSpan, SpanTextProps } from './SpanText.types';
 export { GlassIconButton } from './GlassIconButton';
 export type { GlassIconButtonProps } from './GlassIconButton.types';
+export { SerifText } from './SerifText';
+export type { SerifTextProps } from './SerifText.types';
+export { ThinkingRow } from './ThinkingRow';
+export type { ThinkingRowProps } from './ThinkingRow.types';

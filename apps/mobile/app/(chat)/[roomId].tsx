@@ -27,6 +27,7 @@ import { useAuthStore } from "../../src/store/auth.store";
 import { ChatScrollView } from "../../src/components/ChatScrollView";
 import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
+import { EmptyRoom } from "../../src/components/EmptyRoom";
 import { HeaderAccount, HeaderRoomPill, HeaderRoomsDisc } from "../../src/components/ChatHeader";
 import { roomLabel, backAction } from "../../src/chat/headerPill";
 import { Composer } from "../../src/components/Composer";
@@ -97,9 +98,10 @@ export default function ChatScreen() {
   const roomId = roomIdParam ?? "default";
   const messages = useRoomMessages(roomId);
   const myUserId = useAuthStore((s) => s.user?.id);
+  const myUsername = useAuthStore((s) => s.user?.username);
   const wsStatus = useRoomWsStatus(roomId);
   const { sendMessage, sendTyping, getAwareness, membership } = useSync(roomId);
-  const { typingUsers, onlineCount } = usePresence(getAwareness());
+  const { typingUsers, onlineCount } = usePresence(getAwareness(), myUsername);
   const router = useRouter();
   const t = useChatTheme();
   const { top, bottom } = useSafeAreaInsets();
@@ -213,7 +215,10 @@ export default function ChatScreen() {
           keyExtractor={(item) => item.id}
           maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
           renderScrollComponent={renderScrollComponent}
+          ListEmptyComponent={<EmptyRoom username={myUsername} />}
           contentContainerStyle={{
+            // Lets the empty-room greeting fill and center in the free space.
+            flexGrow: 1,
             paddingTop: !isLiquidGlassAvailable()
               ? 0
               : headerHeight + LIST_PADDING,

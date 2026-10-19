@@ -215,16 +215,20 @@ export default function ChatScreen() {
           keyExtractor={(item) => item.id}
           maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
           renderScrollComponent={renderScrollComponent}
-          ListEmptyComponent={<EmptyRoom username={myUsername} />}
           contentContainerStyle={{
-            // Lets the empty-room greeting fill and center in the free space.
-            flexGrow: 1,
             paddingTop: !isLiquidGlassAvailable()
               ? 0
               : headerHeight + LIST_PADDING,
             paddingBottom: composerHeight + LIST_PADDING,
           }}
         />
+        {messages.length === 0 ? (
+          <EmptyRoom
+            username={myUsername}
+            top={isLiquidGlassAvailable() ? headerHeight : 0}
+            bottom={composerHeight}
+          />
+        ) : null}
       </View>
 
       {/* Soft scroll-edge fade pinned to the bottom safe-area strip: messages

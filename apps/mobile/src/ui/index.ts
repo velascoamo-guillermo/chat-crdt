@@ -32,6 +32,9 @@ export {
   circleButton,
   glassPill,
   glassDisc,
+  glassChip,
+  composerPill,
+  composerCard,
   accessibleLabel,
   type GlassFallback,
 } from './modifiers';

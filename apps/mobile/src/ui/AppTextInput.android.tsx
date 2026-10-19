@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef } from "react";
 import { Keyboard } from "react-native";
 import {
   OutlinedTextField,
+  BasicTextField,
+  Box,
   type TextFieldRef,
   Text,
   type TextFieldKeyboardType,
@@ -62,6 +64,8 @@ export function AppTextInput({
   autoFocus = false,
   grow = false,
   label,
+  bare = false,
+  maxLines,
 }: AppTextInputProps) {
   // Material3 components don't follow the system here — resolve colors from the
   // active scheme so the field adapts to light/dark. Callers can still override.
@@ -94,33 +98,61 @@ export function AppTextInput({
     });
     return () => sub.remove();
   }, [tracksFocus]);
+  const shared = {
+    ref,
+    onFocusChanged: tracksFocus ? handleFocusChanged : undefined,
+    onValueChange: onChangeText,
+    autoFocus,
+    modifiers: grow ? [weight(1)] : [fillMaxWidth()],
+    singleLine: !multiline,
+    maxLines: multiline ? maxLines : undefined,
+    visualTransformation: secureTextEntry ? ("password" as const) : ("none" as const),
+    textStyle: { fontSize, color: textColor },
+    keyboardOptions: {
+      keyboardType: KEYBOARD[keyboardType],
+      capitalization: CAPITALIZATION[autoCapitalize],
+      imeAction: returnKeyType ? IME[returnKeyType] : ("default" as const),
+    },
+    keyboardActions: onSubmitEditing
+      ? {
+          onDone: onSubmitEditing,
+          onGo: onSubmitEditing,
+          onNext: onSubmitEditing,
+          onSearch: onSubmitEditing,
+          onSend: onSubmitEditing,
+        }
+      : undefined,
+  };
+
+  // Bare: no Material outline/container — the caller draws the surface. The
+  // placeholder needs a DecorationBox; a bare Placeholder child never renders.
+  if (bare) {
+    return (
+      <BasicTextField
+        {...shared}
+        value={value as ComponentProps<typeof BasicTextField>["value"]}
+        cursorColor={accent}
+      >
+        <BasicTextField.DecorationBox>
+          <Box contentAlignment="centerStart">
+            {placeholder ? (
+              <BasicTextField.Placeholder>
+                <Text color={placeholder_} style={{ fontSize }}>
+                  {placeholder}
+                </Text>
+              </BasicTextField.Placeholder>
+            ) : null}
+            <BasicTextField.InnerTextField />
+          </Box>
+        </BasicTextField.DecorationBox>
+      </BasicTextField>
+    );
+  }
+
   return (
     <OutlinedTextField
-      ref={ref}
-      onFocusChanged={tracksFocus ? handleFocusChanged : undefined}
+      {...shared}
       value={value as ComponentProps<typeof OutlinedTextField>["value"]}
-      onValueChange={onChangeText}
-      autoFocus={autoFocus}
-      modifiers={grow ? [weight(1)] : [fillMaxWidth()]}
-      singleLine={!multiline}
-      visualTransformation={secureTextEntry ? "password" : "none"}
-      textStyle={{ fontSize, color: textColor }}
-      keyboardOptions={{
-        keyboardType: KEYBOARD[keyboardType],
-        capitalization: CAPITALIZATION[autoCapitalize],
-        imeAction: returnKeyType ? IME[returnKeyType] : "default",
-      }}
-      keyboardActions={
-        onSubmitEditing
-          ? {
-              onDone: onSubmitEditing,
-              onGo: onSubmitEditing,
-              onNext: onSubmitEditing,
-              onSearch: onSubmitEditing,
-              onSend: onSubmitEditing,
-            }
-          : undefined
-      }
       colors={{
         focusedIndicatorColor: accent,
         cursorColor: accent,

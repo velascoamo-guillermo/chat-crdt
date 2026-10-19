@@ -1,20 +1,26 @@
 import { memo, useCallback, useRef, useState } from "react";
 import {
-  Host,
   Row,
   Button,
   Icon,
   AppTextInput,
+  SpanText,
   useNativeState,
   circleButton,
+  glassChip,
   accessibleLabel,
-  useUITheme,
   useChatTheme,
 } from "../ui";
-import { isLiquidGlassAvailable } from "expo-glass-effect";
+import { ComposerSurface } from "./ComposerSurface";
 import ArrowUp from "@expo/material-symbols/arrow_upward.xml";
 import Lock from "@expo/material-symbols/lock.xml";
-import { sendButtonState, sendButtonVisual, type SendButtonVisual } from "../chat/composerState";
+import {
+  composerMode,
+  e2eeChipLabel,
+  sendButtonState,
+  sendButtonVisual,
+  type SendButtonVisual,
+} from "../chat/composerState";
 
 // SF Symbol (iOS) → Material Symbol (Android); a bare SF name renders nothing on Android.
 const ICONS: Record<SendButtonVisual["icon"], { ios: SendButtonVisual["icon"]; android: number }> = {
@@ -30,26 +36,31 @@ interface Props {
    * used while the room is E2EE-enabled but this device hasn't loaded the
    * current epoch's key yet. */
   disabled?: boolean;
+  /** Room has E2EE enabled — shows the display-only `🔒 Encrypted` chip in the card. */
+  encrypted?: boolean;
 }
 
 const TYPING_THROTTLE_MS = 300;
-const CIRCLE = 40;
+const CIRCLE = 36;
 
-export const Composer = memo(function Composer({ onSend, sendTyping, disabled = false }: Props) {
+export const Composer = memo(function Composer({
+  onSend,
+  sendTyping,
+  disabled = false,
+  encrypted = false,
+}: Props) {
   // Text lives in native state — keystrokes don't round-trip through JS or
   // re-render React. `draft.value` is read on demand when sending.
   const draft = useNativeState("");
   const lastTypingAt = useRef(0);
   const lastActive = useRef(false);
-  const t = useUITheme();
   const chat = useChatTheme();
   // Only these two booleans live in React state: they flip on empty↔non-empty
   // and on focus changes, so typing itself never re-renders the composer.
   const [hasText, setHasText] = useState(false);
   // Mirrors hasText so handleChange only calls setHasText on an actual flip.
   const hasTextRef = useRef(false);
-  // Consumed by the pill↔card morph (T7).
-  const [, setFocused] = useState(false);
+  const [focused, setFocused] = useState(false);
 
   const handleChange = useCallback(
     (text: string) => {
@@ -93,27 +104,33 @@ export const Composer = memo(function Composer({ onSend, sendTyping, disabled = 
   }, [disabled, draft, onSend, sendTyping]);
 
   const send = sendButtonVisual(sendButtonState({ hasText, gated: disabled }), chat);
+  const mode = composerMode({ focused, hasDraft: hasText });
+  const chipLabel = e2eeChipLabel(encrypted);
 
   return (
-    <Host
-      matchContents={{ vertical: true }}
-      style={{
-        backgroundColor: !isLiquidGlassAvailable() ? t.surface : "transparent",
-      }}
-    >
-      <Row spacing={12} alignment="center" style={{ padding: 12 }}>
+    <ComposerSurface
+      expanded={mode === "card"}
+      surface={chat.surface}
+      border={chat.border}
+      field={
         <AppTextInput
           value={draft}
           onChangeText={handleChange}
           onFocusChange={setFocused}
           onSubmitEditing={handleSend}
           placeholder="Message…"
+          placeholderColor={chat.placeholder}
+          color={chat.textPrimary}
+          accentColor={chat.accent}
           returnKeyType="send"
           multiline
+          maxLines={6}
           grow
+          bare
         />
-
-        {/* Send circle: muted when empty, accent with text, lock when gated. */}
+      }
+      send={
+        // Muted when empty, accent with text, lock when gated.
         <Button
           variant="text"
           onPress={handleSend}
@@ -122,12 +139,26 @@ export const Composer = memo(function Composer({ onSend, sendTyping, disabled = 
         >
           <Icon
             name={ICONS[send.icon]}
-            size={20}
+            size={18}
             color={send.enabled ? chat.accentOn : chat.textSecondary}
             accessibilityLabel={send.a11yLabel}
           />
         </Button>
-      </Row>
-    </Host>
+      }
+      chip={
+        chipLabel ? (
+          // Display-only; one screen-reader stop.
+          <Row alignment="center" modifiers={glassChip(chat.glassFallback)}>
+            <SpanText
+              accessibilityLabel={chipLabel}
+              spans={[
+                { text: "🔒 ", color: chat.textSecondary, size: 12 },
+                { text: chipLabel, color: chat.textSecondary, size: 13 },
+              ]}
+            />
+          </Row>
+        ) : null
+      }
+    />
   );
 });

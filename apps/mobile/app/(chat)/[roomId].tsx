@@ -280,7 +280,12 @@ export default function ChatScreen() {
               </Text>
             </>
           )}
-          <Composer onSend={handleSend} sendTyping={sendTyping} disabled={!composerReady} />
+          <Composer
+            onSend={handleSend}
+            sendTyping={sendTyping}
+            disabled={!composerReady}
+            encrypted={currentKeyId > 0}
+          />
         </View>
       </KeyboardStickyView>
     </KeyboardGestureArea>

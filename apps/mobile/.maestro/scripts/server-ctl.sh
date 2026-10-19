@@ -45,7 +45,10 @@ start() {
 
 stop() {
   local pids
-  pids="$(lsof -ti ":${PORT}" || true)"
+  # LISTEN only: a bare `lsof -ti :PORT` also matches every *client* holding a
+  # socket to the server — the iOS simulator app and the adb server (reverse
+  # tunnel) — and SIGTERMs them too (app drops to SpringBoard, adb reverse lost).
+  pids="$(lsof -ti ":${PORT}" -sTCP:LISTEN || true)"
   if [ -z "$pids" ]; then
     echo "[server-ctl] nothing listening on :${PORT}"
     return 0
@@ -63,7 +66,7 @@ stop() {
 
   # Didn't go down gracefully — escalate, then give it one more short window.
   local stragglers
-  stragglers="$(lsof -ti ":${PORT}" || true)"
+  stragglers="$(lsof -ti ":${PORT}" -sTCP:LISTEN || true)"
   if [ -n "$stragglers" ]; then
     echo "[server-ctl] still listening after SIGTERM — sending SIGKILL to: $stragglers" >&2
     kill -9 $stragglers 2>/dev/null || true

@@ -125,6 +125,11 @@ export function useRoomMessages(roomId: string): MessageDto[] {
   return useChatStore((s) => s.messagesByRoom[roomId] ?? EMPTY_MESSAGES);
 }
 
+/** True once this room's local history has loaded (false again after clearRoom). */
+export function useRoomLoaded(roomId: string): boolean {
+  return useChatStore((s) => roomId in s.messagesByRoom);
+}
+
 export function useRoomWsStatus(roomId: string): WsStatus {
   return useChatStore((s) => s.wsStatusByRoom[roomId] ?? 'disconnected');
 }

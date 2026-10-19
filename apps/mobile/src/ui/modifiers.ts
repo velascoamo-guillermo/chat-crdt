@@ -5,6 +5,7 @@ import {
   buttonStyle,
   glassEffect,
   accessibilityLabel as swiftAccessibilityLabel,
+  accessibilityHidden,
 } from "@expo/ui/swift-ui/modifiers";
 import {
   weight,
@@ -135,6 +136,13 @@ export function glassDisc(fallback: GlassFallback, size_ = 38) {
 // Pair with Icon's own `accessibilityLabel` prop for the Android half.
 export function accessibleLabel(label: string) {
   return Platform.OS === "android" ? [] : [swiftAccessibilityLabel(label)];
+}
+
+// Hides a decorative glyph from VoiceOver (an SF Symbol Image announces its name,
+// e.g. "asterisk"). Android needs nothing: an Icon without a label has no
+// contentDescription, so TalkBack skips it.
+export function decorative() {
+  return Platform.OS === "android" ? [] : [accessibilityHidden(true)];
 }
 
 // Circular liquid glass icon button. Defaults to a neutral white tint; pass a

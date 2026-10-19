@@ -3,7 +3,7 @@ import { StyleSheet } from "react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Asterisk from "@expo/material-symbols/asterisk.xml";
-import { Column, Host, Icon, SerifText, useChatTheme } from "../ui";
+import { Column, Host, Icon, SerifText, decorative, useChatTheme } from "../ui";
 import { greeting } from "../chat/conversationCopy";
 
 // SF Symbol (iOS) → Material Symbol (Android); same starburst on both.
@@ -17,10 +17,10 @@ interface Props {
 }
 
 // Empty-room greeting (spec goal 3): accent glyph above a serif "Welcome back".
-// An overlay over the list's free space rather than a ListEmptyComponent: that
-// needs a flexGrow content container, which broke startRenderingFromBottom on
-// Android (the first message landed under the composer). Rises by half the
-// keyboard height so it stays centered above the lifted composer.
+// An overlay over the list's free space rather than a ListEmptyComponent: a
+// flexGrow empty component stays sized to the full list while the keyboard
+// lifts the composer, so the greeting sat under the banner. The overlay rises
+// by half the keyboard height to stay centered above the lifted composer.
 export const EmptyRoom = memo(function EmptyRoom({ username, top, bottom }: Props) {
   const t = useChatTheme();
   const { height } = useReanimatedKeyboardAnimation();
@@ -34,7 +34,7 @@ export const EmptyRoom = memo(function EmptyRoom({ username, top, bottom }: Prop
     >
       <Host matchContents style={styles.host}>
         <Column alignment="center" spacing={14}>
-          <Icon name={GLYPH} size={36} color={t.accent} />
+          <Icon name={GLYPH} size={36} color={t.accent} modifiers={decorative()} />
           <SerifText size={28} color={t.textPrimary}>
             {greeting(username)}
           </SerifText>

@@ -16,7 +16,7 @@ import {
 } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
-import { useRoomMessages, useRoomWsStatus, useRoomCrypto } from "../../src/store/chat.store";
+import { useRoomMessages, useRoomWsStatus, useRoomCrypto, useRoomLoaded } from "../../src/store/chat.store";
 import { useRoomsStore } from "../../src/store/rooms.store";
 import { useSync } from "../../src/hooks/useSync";
 import { useEnableRoomE2ee } from "../../src/hooks/useE2ee";
@@ -28,6 +28,7 @@ import { ChatScrollView } from "../../src/components/ChatScrollView";
 import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
 import { EmptyRoom } from "../../src/components/EmptyRoom";
+import { showEmptyRoom } from "../../src/chat/emptyRoomGate";
 import { HeaderAccount, HeaderRoomPill, HeaderRoomsDisc } from "../../src/components/ChatHeader";
 import { roomLabel, backAction } from "../../src/chat/headerPill";
 import { Composer } from "../../src/components/Composer";
@@ -97,6 +98,7 @@ export default function ChatScreen() {
   const { roomId: roomIdParam } = useLocalSearchParams<{ roomId: string }>();
   const roomId = roomIdParam ?? "default";
   const messages = useRoomMessages(roomId);
+  const loaded = useRoomLoaded(roomId);
   const myUserId = useAuthStore((s) => s.user?.id);
   const myUsername = useAuthStore((s) => s.user?.username);
   const wsStatus = useRoomWsStatus(roomId);
@@ -222,7 +224,7 @@ export default function ChatScreen() {
             paddingBottom: composerHeight + LIST_PADDING,
           }}
         />
-        {messages.length === 0 ? (
+        {showEmptyRoom({ loaded, messageCount: messages.length, wsStatus }) ? (
           <EmptyRoom
             username={myUsername}
             top={isLiquidGlassAvailable() ? headerHeight : 0}

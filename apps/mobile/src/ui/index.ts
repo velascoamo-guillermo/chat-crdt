@@ -33,6 +33,7 @@ export {
   glassPill,
   glassDisc,
   accessibleLabel,
+  decorative,
   type GlassFallback,
 } from './modifiers';
 export { SpanText } from './SpanText';

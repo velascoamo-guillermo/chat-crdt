@@ -9,12 +9,13 @@ import {
   Row,
   Text,
 } from "@expo/ui/jetpack-compose";
-import { background, clip, padding, semantics, Shapes } from "@expo/ui/jetpack-compose/modifiers";
+import { background, clip, padding, Shapes } from "@expo/ui/jetpack-compose/modifiers";
 import type { ThinkingRowProps } from "./ThinkingRow.types";
 
 // Quiet "thinking" row on a bubble-like rounded surface at the start edge. Stays
 // mounted so Compose's AnimatedVisibility can fade/expand it in and out; the last
-// label is kept while it fades out instead of blanking first.
+// label is kept while it fades out instead of blanking first. The Text is the
+// row's only TalkBack node (the Icon has no description), so it is read once.
 export function ThinkingRow({ label, color, fill, radius }: ThinkingRowProps) {
   const [shown, setShown] = useState(label);
   if (label && label !== shown) setShown(label);
@@ -34,7 +35,6 @@ export function ThinkingRow({ label, color, fill, radius }: ThinkingRowProps) {
               clip(Shapes.RoundedCorner(radius)),
               background(fill),
               padding(12, 7, 12, 7),
-              semantics({ contentDescription: shown }),
             ]}
           >
             <Icon source={MoreHoriz} size={16} tint={color} />

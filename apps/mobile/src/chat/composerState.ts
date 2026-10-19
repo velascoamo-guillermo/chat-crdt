@@ -38,3 +38,19 @@ export function sendButtonVisual(state: SendButtonState, theme: ChatTheme): Send
 export function e2eeChipLabel(encrypted: boolean): string | null {
   return encrypted ? 'Encrypted' : null;
 }
+
+/**
+ * Next step for the Android composer height wrapper, given the last applied
+ * height and a new measurement of the Compose content. First measurement
+ * snaps (nothing to animate from); empty/invalid or sub-pixel changes are
+ * ignored (null) so unmount and layout jitter never start a spring.
+ */
+export function composerHeightStep(
+  prev: number | null,
+  measured: number,
+): { height: number; animate: boolean } | null {
+  if (!Number.isFinite(measured) || measured <= 0) return null;
+  if (prev === null) return { height: measured, animate: false };
+  if (Math.abs(measured - prev) < 1) return null;
+  return { height: measured, animate: true };
+}

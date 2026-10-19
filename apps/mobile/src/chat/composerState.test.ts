@@ -4,6 +4,7 @@ import {
   sendButtonState,
   sendButtonVisual,
   e2eeChipLabel,
+  composerHeightStep,
 } from './composerState';
 import { chatDarkTheme, chatTheme } from '../ui/chatTheme';
 
@@ -15,6 +16,29 @@ describe('composerMode', () => {
     [true, true, 'card'],
   ] as const)('focused=%p hasDraft=%p → %s', (focused, hasDraft, mode) => {
     expect(composerMode({ focused, hasDraft })).toBe(mode);
+  });
+  it('stays a card after send while focus is retained (keyboard stays open)', () => {
+    expect(composerMode({ focused: true, hasDraft: false })).toBe('card');
+  });
+  it('stays a card when blurred with a kept draft (interactive dismiss, failed send)', () => {
+    expect(composerMode({ focused: false, hasDraft: true })).toBe('card');
+  });
+});
+
+describe('composerHeightStep (Android height wrapper)', () => {
+  it('jumps to the first measurement without animating', () => {
+    expect(composerHeightStep(null, 52)).toEqual({ height: 52, animate: false });
+  });
+  it('animates to a new measured height', () => {
+    expect(composerHeightStep(52, 104)).toEqual({ height: 104, animate: true });
+  });
+  it('ignores sub-pixel jitter', () => {
+    expect(composerHeightStep(104, 104.4)).toBeNull();
+  });
+  it('ignores empty or invalid measurements (unmounting / not laid out yet)', () => {
+    expect(composerHeightStep(104, 0)).toBeNull();
+    expect(composerHeightStep(null, 0)).toBeNull();
+    expect(composerHeightStep(104, Number.NaN)).toBeNull();
   });
 });
 

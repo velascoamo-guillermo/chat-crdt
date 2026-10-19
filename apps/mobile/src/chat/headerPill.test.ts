@@ -5,6 +5,8 @@ import {
   headerPillA11yLabel,
   statusTone,
   backAction,
+  pillSlotWidth,
+  PILL_SLOT_MAX,
 } from './headerPill';
 
 describe('roomLabel', () => {
@@ -60,5 +62,17 @@ describe('backAction', () => {
   });
   it('replaces with rooms on a cold start into a room', () => {
     expect(backAction(false)).toBe('replace-rooms');
+  });
+});
+
+describe('pillSlotWidth', () => {
+  it('leaves room for both header discs', () => {
+    expect(pillSlotWidth(390)).toBe(390 - 2 * 62);
+  });
+  it('caps on wide screens', () => {
+    expect(pillSlotWidth(1024)).toBe(PILL_SLOT_MAX);
+  });
+  it('never goes negative', () => {
+    expect(pillSlotWidth(100)).toBe(0);
   });
 });

@@ -178,7 +178,10 @@ export default function ChatScreen() {
       <Stack.Screen
         options={{
           headerShown: true,
-          // No title text: the center slot is the room/status pill.
+          // No title text: the center slot is the room/status pill. `title`
+          // still names the screen for VoiceOver's header heading, which
+          // otherwise falls back to the route name ("[roomId]").
+          title: roomLabel(roomId),
           headerTitle: () => (
             <HeaderRoomPill roomId={roomId} wsStatus={wsStatus} onlineCount={onlineCount} />
           ),

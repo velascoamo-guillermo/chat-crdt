@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { View, useWindowDimensions } from "react-native";
 import MenuIcon from "@expo/material-symbols/menu.xml";
 import AccountCircle from "@expo/material-symbols/account_circle.xml";
 import {
@@ -18,9 +19,11 @@ import {
   presenceLabel,
   statusTone,
   headerPillA11yLabel,
+  pillSlotWidth,
 } from "../chat/headerPill";
 
 const DISC = 38;
+const PILL_SLOT_HEIGHT = 44;
 const GLYPH = 20;
 // Icon-only buttons, no visible text — must be reachable by an accessibility
 // label for VoiceOver and for Maestro's `tapOn: "Account"` (see
@@ -88,25 +91,37 @@ export const HeaderRoomPill = memo(function HeaderRoomPill({
   onlineCount: number;
 }) {
   const t = useChatTheme();
+  const { width } = useWindowDimensions();
+  // Fixed-size slot: see pillSlotWidth for why the pill can't size itself here.
   return (
-    <Host matchContents={{ horizontal: true, vertical: true }}>
-      <Row
-        spacing={6}
-        alignment="center"
-        modifiers={[
-          ...glassPill(t.glassFallback),
-          ...accessibleGroup(headerPillA11yLabel(roomId, wsStatus, onlineCount)),
-        ]}
-      >
-        <Text textStyle={{ fontSize: 15, fontWeight: "600", color: t.textPrimary }}>
-          {roomLabel(roomId)}
-        </Text>
-        <Text textStyle={{ fontSize: 13, color: t.textSecondary }}>·</Text>
-        <Text textStyle={{ fontSize: 10, color: t.status[statusTone(wsStatus)] }}>●</Text>
-        <Text textStyle={{ fontSize: 13, color: t.textSecondary }}>
-          {presenceLabel(onlineCount)}
-        </Text>
-      </Row>
-    </Host>
+    <View
+      pointerEvents="none"
+      style={{
+        width: pillSlotWidth(width),
+        height: PILL_SLOT_HEIGHT,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <Host matchContents={{ horizontal: true, vertical: true }}>
+        <Row
+          spacing={6}
+          alignment="center"
+          modifiers={[
+            ...glassPill(t.glassFallback),
+            ...accessibleGroup(headerPillA11yLabel(roomId, wsStatus, onlineCount)),
+          ]}
+        >
+          <Text textStyle={{ fontSize: 15, fontWeight: "600", color: t.textPrimary }}>
+            {roomLabel(roomId)}
+          </Text>
+          <Text textStyle={{ fontSize: 13, color: t.textSecondary }}>·</Text>
+          <Text textStyle={{ fontSize: 10, color: t.status[statusTone(wsStatus)] }}>●</Text>
+          <Text textStyle={{ fontSize: 13, color: t.textSecondary }}>
+            {presenceLabel(onlineCount)}
+          </Text>
+        </Row>
+      </Host>
+    </View>
   );
 });

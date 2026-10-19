@@ -31,3 +31,17 @@ export function headerPillA11yLabel(roomId: string, wsStatus: string, onlineCoun
 export function backAction(canGoBack: boolean): BackAction {
   return canGoBack ? 'back' : 'replace-rooms';
 }
+
+// Per-side space the header discs take: 16 bar inset + 38 disc + 8 gap.
+const DISC_SIDE = 62;
+export const PILL_SLOT_MAX = 280;
+
+/**
+ * Width of the fixed slot the center pill renders in. iOS native-stack sizes a
+ * custom title view from its first layout, before @expo/ui's Host has measured
+ * its SwiftUI content — an intrinsically sized pill gets a zero frame and never
+ * shows. A fixed slot (pill centered inside) sidesteps that.
+ */
+export function pillSlotWidth(screenWidth: number): number {
+  return Math.max(0, Math.min(screenWidth - 2 * DISC_SIDE, PILL_SLOT_MAX));
+}

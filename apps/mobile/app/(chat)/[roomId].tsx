@@ -199,10 +199,6 @@ export default function ChatScreen() {
 
       <View style={styles.list}>
         <FlashList
-          // Remount once on empty → non-empty: on Android, startRenderingFromBottom
-          // only anchors at mount, so a list that mounted empty laid the first
-          // message out under the composer until the room was re-entered.
-          key={messages.length === 0 ? "empty" : "messages"}
           data={messages}
           renderItem={({ item, index }) => {
             const g = groupPosition(messages[index - 1], item, messages[index + 1], GROUP_GAP_MS, myUserId);

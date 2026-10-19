@@ -33,6 +33,9 @@ export {
   glassPill,
   glassDisc,
   accessibleLabel,
-  accessibleGroup,
   type GlassFallback,
 } from './modifiers';
+export { SpanText } from './SpanText';
+export type { TextSpan, SpanTextProps } from './SpanText.types';
+export { GlassIconButton } from './GlassIconButton';
+export type { GlassIconButtonProps } from './GlassIconButton.types';

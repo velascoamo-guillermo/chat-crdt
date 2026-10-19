@@ -5,7 +5,6 @@ import {
   buttonStyle,
   glassEffect,
   accessibilityLabel as swiftAccessibilityLabel,
-  accessibilityElement,
 } from "@expo/ui/swift-ui/modifiers";
 import {
   weight,
@@ -16,7 +15,6 @@ import {
   padding as composePadding,
   Shapes,
   fillMaxWidth,
-  semantics,
 } from "@expo/ui/jetpack-compose/modifiers";
 
 // 6-digit hex -> 8-digit hex with the given alpha (00–FF). Lets us reuse the
@@ -137,15 +135,6 @@ export function glassDisc(fallback: GlassFallback, size_ = 38) {
 // Pair with Icon's own `accessibilityLabel` prop for the Android half.
 export function accessibleLabel(label: string) {
   return Platform.OS === "android" ? [] : [swiftAccessibilityLabel(label)];
-}
-
-// Collapse a display-only group (e.g. the header room/status pill) into one
-// screen-reader element announced as `label`. iOS replaces the children with a
-// single labelled element; Android sets the group's content description.
-export function accessibleGroup(label: string) {
-  return Platform.OS === "android"
-    ? [semantics({ contentDescription: label })]
-    : [accessibilityElement("ignore"), swiftAccessibilityLabel(label)];
 }
 
 // Circular liquid glass icon button. Defaults to a neutral white tint; pass a

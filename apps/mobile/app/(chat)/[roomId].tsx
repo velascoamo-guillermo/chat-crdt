@@ -217,7 +217,7 @@ export default function ChatScreen() {
             paddingTop: !isLiquidGlassAvailable()
               ? 0
               : headerHeight + LIST_PADDING,
-            paddingBottom: composerHeight + LIST_PADDING,
+            paddingBottom: composerHeight + bottom + LIST_PADDING,
           }}
         />
       </View>
@@ -233,7 +233,9 @@ export default function ChatScreen() {
         pointerEvents="none"
       />
 
-      <KeyboardStickyView style={[styles.composer]}>
+      {/* Lift the composer over the home indicator / nav bar only while the
+          keyboard is closed; open, it docks on the keyboard edge. */}
+      <KeyboardStickyView style={[styles.composer]} offset={{ closed: -bottom, opened: 0 }}>
         <View onLayout={handleComposerLayout}>
           {canEnableE2ee ? <EnableEncryptionBanner roomId={roomId} /> : null}
           {!composerReady ? (

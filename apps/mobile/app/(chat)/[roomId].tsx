@@ -6,6 +6,8 @@ import {
   StyleSheet,
   Platform,
   type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type ScrollViewProps,
 } from "react-native";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
@@ -30,7 +32,13 @@ import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
 import { EmptyRoom } from "../../src/components/EmptyRoom";
 import { showEmptyRoom } from "../../src/chat/emptyRoomGate";
-import { shouldReanchor, shouldFollowNewMessages } from "../../src/chat/listAnchor";
+import {
+  composerResizeScroll,
+  shouldFollowNewMessages,
+  isAtListEnd,
+  isSpuriousResetToTop,
+  type ScrollMetrics,
+} from "../../src/chat/listAnchor";
 import { HeaderAccount, HeaderRoomPill, HeaderRoomsDisc } from "../../src/components/ChatHeader";
 import { roomLabel, backAction } from "../../src/chat/headerPill";
 import { Composer } from "../../src/components/Composer";
@@ -45,7 +53,10 @@ const LIST_PADDING = 8;
 const HEADER_BASE = Platform.OS === "ios" ? 44 : 56;
 
 // The part of the mounted ScrollView instance the re-anchor uses.
-type NativeScroller = { scrollToEnd: (options?: { animated?: boolean }) => void };
+type NativeScroller = {
+  scrollToEnd: (options?: { animated?: boolean }) => void;
+  scrollTo: (options: { y: number; animated?: boolean }) => void;
+};
 
 // QA-only readout for the Maestro E2E offline-sync flow (apps/mobile/.maestro).
 // Requires BOTH __DEV__ (never true in a release build, regardless of env
@@ -136,9 +147,16 @@ export default function ChatScreen() {
   // the reader is at the end, scroll back to the end so the last bubble stays
   // above it instead of sliding underneath.
   const listRef = useRef<FlashListRef<MessageDto>>(null);
-  // False until the scroll view reports (onEndVisible fires once after it is
-  // measured), so mount-time layouts never fight startRenderingFromBottom.
+  // At-end is derived here from scroll offset, viewport, content height and
+  // the keyboard inset (isAtListEnd), not keyboard-controller's onEndVisible,
+  // which ignores the inset and reports "at end" for a reader scrolled up by
+  // less than the keyboard height. Recomputed on scroll, layout and inset
+  // changes — not on content growth, so a new message is judged against where
+  // the reader was before it arrived. False until measured, so mount-time
+  // layouts never fight startRenderingFromBottom.
+  const metricsRef = useRef<ScrollMetrics>({ offset: 0, visibleHeight: 0, contentHeight: 0, bottomInset: 0 });
   const atEndRef = useRef(false);
+  const userScrollingRef = useRef(false);
   const lastComposerHeight = useRef(0);
 
   // Native scroll view, not FlashList.scrollToEnd: the latter computes its
@@ -153,14 +171,14 @@ export default function ChatScreen() {
 
   const handleComposerLayout = useCallback((e: LayoutChangeEvent) => {
     const next = e.nativeEvent.layout.height;
-    const reanchor = shouldReanchor({
+    const action = composerResizeScroll({
       atEnd: atEndRef.current,
       prevHeight: lastComposerHeight.current,
       nextHeight: next,
     });
     lastComposerHeight.current = next;
     setComposerHeight(next);
-    if (reanchor) scrollListToEnd(true);
+    if (action !== "none") scrollListToEnd(action === "animate");
   }, [scrollListToEnd]);
 
   // FlashList's startRenderingFromBottom rests a short list on the viewport's
@@ -183,13 +201,78 @@ export default function ChatScreen() {
 
   const handleListLoad = useCallback(() => scrollListToEnd(false), [scrollListToEnd]);
 
-  const handleEndVisible = useCallback((visible: boolean) => {
-    atEndRef.current = visible;
-  }, []);
-
+  // (keyboard-controller's extraContentPadding would replace this padding +
+  // re-anchor pair, but on Android with Reanimated 4.7 its scroll correction
+  // throws "Object is not a function": useExtraContentPadding calls the
+  // animated ref inside a nested requestAnimationFrame worklet.)
   const renderScrollComponent = useCallback(
-    (props: ScrollViewProps) => <ChatScrollView {...props} onEndVisible={handleEndVisible} />,
-    [handleEndVisible],
+    (props: ScrollViewProps) => {
+      const m = metricsRef.current;
+      const refreshAtEnd = () => {
+        atEndRef.current = isAtListEnd(m);
+      };
+      return (
+        <ChatScrollView
+          {...props}
+          // Closed, the composer sits `bottom` above the screen edge (sticky
+          // view offset); open, it rides the keyboard — so the keyboard lift
+          // only covers what the static `bottom` padding doesn't.
+          offset={bottom}
+          onScrollBeginDrag={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+            userScrollingRef.current = true;
+            props.onScrollBeginDrag?.(e);
+          }}
+          onScrollEndDrag={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+            userScrollingRef.current = false;
+            props.onScrollEndDrag?.(e);
+          }}
+          onMomentumScrollBegin={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+            userScrollingRef.current = true;
+            props.onMomentumScrollBegin?.(e);
+          }}
+          onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+            userScrollingRef.current = false;
+            props.onMomentumScrollEnd?.(e);
+          }}
+          onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
+            const n = e.nativeEvent;
+            // iOS Fabric × keyboard-controller: a re-render with the keyboard
+            // open resets the offset to 0 (see isSpuriousResetToTop). Undo it
+            // imperatively and keep FlashList on the reader's position.
+            if (
+              isSpuriousResetToTop({
+                prevOffset: m.offset,
+                nextOffset: n.contentOffset.y,
+                userScrolling: userScrollingRef.current,
+              })
+            ) {
+              const scroller = listRef.current?.getNativeScrollRef() as unknown as NativeScroller | null;
+              scroller?.scrollTo({ y: m.offset, animated: false });
+              return;
+            }
+            m.offset = n.contentOffset.y;
+            m.contentHeight = n.contentSize.height;
+            m.visibleHeight = n.layoutMeasurement.height;
+            refreshAtEnd();
+            props.onScroll?.(e);
+          }}
+          onLayout={(e: LayoutChangeEvent) => {
+            m.visibleHeight = e.nativeEvent.layout.height;
+            refreshAtEnd();
+            props.onLayout?.(e);
+          }}
+          onContentSizeChange={(w: number, h: number) => {
+            m.contentHeight = h;
+            props.onContentSizeChange?.(w, h);
+          }}
+          onContentInsetChange={(insets) => {
+            m.bottomInset = insets.bottom;
+            refreshAtEnd();
+          }}
+        />
+      );
+    },
+    [bottom],
   );
 
   // Left disc: pop back to Rooms, or — on a cold start straight into a room
@@ -289,7 +372,7 @@ export default function ChatScreen() {
           <EmptyRoom
             username={myUsername}
             top={isLiquidGlassAvailable() ? headerHeight : 0}
-            bottom={composerHeight}
+            bottom={composerHeight + bottom}
           />
         ) : null}
       </View>

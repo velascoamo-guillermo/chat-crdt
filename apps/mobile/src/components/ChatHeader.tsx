@@ -1,81 +1,110 @@
 import { memo } from "react";
+import MenuIcon from "@expo/material-symbols/menu.xml";
+import AccountCircle from "@expo/material-symbols/account_circle.xml";
 import {
   Host,
   Row,
   Button,
   Text,
   Icon,
-  darkTheme,
-  theme,
-  statusColor,
   glassPill,
   glassDisc,
   accessibleLabel,
-  useUITheme,
+  accessibleGroup,
+  useChatTheme,
 } from "../ui";
+import {
+  roomLabel,
+  presenceLabel,
+  statusTone,
+  headerPillA11yLabel,
+} from "../chat/headerPill";
 
 const DISC = 38;
-// Icon-only button, no visible text — must be reachable by an accessibility
+const GLYPH = 20;
+// Icon-only buttons, no visible text — must be reachable by an accessibility
 // label for VoiceOver and for Maestro's `tapOn: "Account"` (see
 // accessibleLabel in ui/modifiers.ts for why this needs both the Icon prop
 // AND the iOS-only SwiftUI modifier).
+const ROOMS_LABEL = "Rooms";
 const ACCOUNT_LABEL = "Account";
 
-// Account action for the native header's right slot — SF Symbol on a liquid
-// glass disc. Opens the account formSheet (email + logout). The glass comes
-// from the `glassEffect` modifier (iOS); Android uses a translucent fallback.
-export const HeaderAccount = memo(function HeaderAccount({
+// SF Symbol (iOS) → Material Symbol (Android); a bare SF name renders nothing on Android.
+const MENU_ICON = { ios: "line.3.horizontal", android: MenuIcon } as const;
+const ACCOUNT_ICON = { ios: "person.crop.circle", android: AccountCircle } as const;
+
+// Glass icon disc shared by the left and right header slots.
+const HeaderDisc = memo(function HeaderDisc({
+  icon,
+  label,
   onPress,
 }: {
+  icon: typeof MENU_ICON | typeof ACCOUNT_ICON;
+  label: string;
   onPress: () => void;
 }) {
+  const t = useChatTheme();
   return (
     <Host matchContents={{ horizontal: true, vertical: true }}>
       <Button
         variant="text"
         onPress={onPress}
-        modifiers={[...glassDisc(DISC), ...accessibleLabel(ACCOUNT_LABEL)]}
+        modifiers={[...glassDisc(t.glassFallback, DISC), ...accessibleLabel(label)]}
       >
-        <Icon
-          name="person.crop.circle.fill"
-          size={28}
-          color={theme.accent}
-          accessibilityLabel={ACCOUNT_LABEL}
-        />
+        <Icon name={icon} size={GLYPH} color={t.textPrimary} accessibilityLabel={label} />
       </Button>
     </Host>
   );
 });
 
-// Presence indicator for the native header's right slot — a liquid glass pill
-// holding a status dot and the online count.
-export const OnlinePill = memo(function OnlinePill({
+// Left slot: back to the rooms list. The screen decides pop vs replace (see backAction).
+export const HeaderRoomsDisc = memo(function HeaderRoomsDisc({
+  onPress,
+}: {
+  onPress: () => void;
+}) {
+  return <HeaderDisc icon={MENU_ICON} label={ROOMS_LABEL} onPress={onPress} />;
+});
+
+// Right slot: opens the account formSheet (email + logout).
+export const HeaderAccount = memo(function HeaderAccount({
+  onPress,
+}: {
+  onPress: () => void;
+}) {
+  return <HeaderDisc icon={ACCOUNT_ICON} label={ACCOUNT_LABEL} onPress={onPress} />;
+});
+
+// Center slot (replaces the title): display-only glass pill reading
+// `# room · ● N online`, dot colored by ws status. Screen readers get one
+// element whose label starts with the room name — Maestro matches on that.
+export const HeaderRoomPill = memo(function HeaderRoomPill({
+  roomId,
   wsStatus,
   onlineCount,
 }: {
+  roomId: string;
   wsStatus: string;
   onlineCount: number;
 }) {
-  const t = useUITheme();
+  const t = useChatTheme();
   return (
     <Host matchContents={{ horizontal: true, vertical: true }}>
       <Row
         spacing={6}
         alignment="center"
-        style={{ backgroundColor: t.surface }}
-        modifiers={glassPill()}
+        modifiers={[
+          ...glassPill(t.glassFallback),
+          ...accessibleGroup(headerPillA11yLabel(roomId, wsStatus, onlineCount)),
+        ]}
       >
-        <Text textStyle={{ fontSize: 14, color: statusColor(wsStatus) }}>
-          ●
+        <Text textStyle={{ fontSize: 15, fontWeight: "600", color: t.textPrimary }}>
+          {roomLabel(roomId)}
         </Text>
-        <Text
-          textStyle={{
-            fontSize: 13,
-            fontWeight: "500",
-            // color: theme.textPrimary,
-          }}
-        >
-          {`${onlineCount} online`}
+        <Text textStyle={{ fontSize: 13, color: t.textSecondary }}>·</Text>
+        <Text textStyle={{ fontSize: 10, color: t.status[statusTone(wsStatus)] }}>●</Text>
+        <Text textStyle={{ fontSize: 13, color: t.textSecondary }}>
+          {presenceLabel(onlineCount)}
         </Text>
       </Row>
     </Host>

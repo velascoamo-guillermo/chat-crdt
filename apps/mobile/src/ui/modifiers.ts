@@ -5,6 +5,7 @@ import {
   buttonStyle,
   glassEffect,
   accessibilityLabel as swiftAccessibilityLabel,
+  accessibilityElement,
 } from "@expo/ui/swift-ui/modifiers";
 import {
   weight,
@@ -12,9 +13,10 @@ import {
   clip,
   background,
   border,
-  paddingAll,
+  padding as composePadding,
   Shapes,
   fillMaxWidth,
+  semantics,
 } from "@expo/ui/jetpack-compose/modifiers";
 
 // 6-digit hex -> 8-digit hex with the given alpha (00–FF). Lets us reuse the
@@ -86,11 +88,20 @@ export function inlinePillButton(tint = "#FFFFFF") {
   return pillButton(tint);
 }
 
-// Small liquid glass capsule for header chips (e.g. the presence pill).
-// Android fakes it with a translucent rounded surface + hairline border.
-export function glassPill() {
+// Translucent fill + hairline border standing in for liquid glass on Android.
+// Pass the chat theme's `glassFallback` tokens (chatTheme.ts).
+export type GlassFallback = { fill: string; border: string };
+
+// Small liquid glass capsule for header chips (e.g. the room/status pill).
+// Android fakes it with the `glassFallback` fill + hairline border.
+export function glassPill(fallback: GlassFallback) {
   if (Platform.OS === "android") {
-    return [clip(Shapes.RoundedCorner(14)), paddingAll(8)];
+    return [
+      clip(Shapes.RoundedCorner(18)),
+      background(fallback.fill),
+      border(1, fallback.border),
+      composePadding(14, 8, 14, 8),
+    ];
   }
   return [
     padding({ horizontal: 12, vertical: 6 }),
@@ -98,11 +109,16 @@ export function glassPill() {
   ];
 }
 
-// Circular liquid glass disc for header icon buttons (e.g. the account button).
-// Android fakes it with a translucent tinted circle + border.
-export function glassDisc(size_ = 38) {
+// Circular liquid glass disc for header icon buttons (rooms / account).
+// Android fakes it with the `glassFallback` fill + hairline border.
+export function glassDisc(fallback: GlassFallback, size_ = 38) {
   if (Platform.OS === "android") {
-    return [size(size_, size_), clip(Shapes.Circle)];
+    return [
+      size(size_, size_),
+      clip(Shapes.Circle),
+      background(fallback.fill),
+      border(1, fallback.border),
+    ];
   }
   return [
     frame({ width: size_, height: size_ }),
@@ -121,6 +137,15 @@ export function glassDisc(size_ = 38) {
 // Pair with Icon's own `accessibilityLabel` prop for the Android half.
 export function accessibleLabel(label: string) {
   return Platform.OS === "android" ? [] : [swiftAccessibilityLabel(label)];
+}
+
+// Collapse a display-only group (e.g. the header room/status pill) into one
+// screen-reader element announced as `label`. iOS replaces the children with a
+// single labelled element; Android sets the group's content description.
+export function accessibleGroup(label: string) {
+  return Platform.OS === "android"
+    ? [semantics({ contentDescription: label })]
+    : [accessibilityElement("ignore"), swiftAccessibilityLabel(label)];
 }
 
 // Circular liquid glass icon button. Defaults to a neutral white tint; pass a

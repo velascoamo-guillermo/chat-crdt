@@ -27,7 +27,8 @@ import { useAuthStore } from "../../src/store/auth.store";
 import { ChatScrollView } from "../../src/components/ChatScrollView";
 import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
-import { HeaderAccount, OnlinePill } from "../../src/components/ChatHeader";
+import { HeaderAccount, HeaderRoomPill, HeaderRoomsDisc } from "../../src/components/ChatHeader";
+import { roomLabel, backAction } from "../../src/chat/headerPill";
 import { Composer } from "../../src/components/Composer";
 import { useChatTheme } from "../../src/ui";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
@@ -46,13 +47,6 @@ const HEADER_BASE = Platform.OS === "ios" ? 44 : 56;
 // var: the readout is absent even though __DEV__ is true.
 const QA_READOUT_ENABLED =
   __DEV__ && process.env.EXPO_PUBLIC_QA_READOUT === "1";
-
-// The 'default' room is the pre-existing single-room-MVP lobby — its header
-// keeps the original "# general" copy the Maestro suite (apps/mobile/.maestro)
-// asserts on. Any other room shows its own slug.
-function headerTitle(roomId: string): string {
-  return roomId === "default" ? "# general" : `# ${roomId}`;
-}
 
 // ADR-010, Key-rotation trigger list item 0 (enablement): no special actor
 // or endpoint beyond the same atomic claim any member can call — in
@@ -136,6 +130,13 @@ export default function ChatScreen() {
     [],
   );
 
+  // Left disc: pop back to Rooms, or — on a cold start straight into a room
+  // (no history) — replace this screen with Rooms.
+  const handleRoomsPress = useCallback(() => {
+    if (backAction(router.canGoBack()) === "back") router.back();
+    else router.replace("/(chat)/rooms");
+  }, [router]);
+
   const handleSend = useCallback(
     (content: string) => {
       // Defensive try/catch (code review round 1, Critical #3): the
@@ -158,7 +159,7 @@ export default function ChatScreen() {
   if (membership === "not-a-member") {
     return (
       <View style={styles.notMemberContainer}>
-        <Stack.Screen options={{ headerShown: true, title: headerTitle(roomId) }} />
+        <Stack.Screen options={{ headerShown: true, title: roomLabel(roomId) }} />
         <Text style={[styles.notMemberText, { color: t.textPrimary }]}>
           You&apos;re not a member of this room.
         </Text>
@@ -177,13 +178,14 @@ export default function ChatScreen() {
       <Stack.Screen
         options={{
           headerShown: true,
-          title: headerTitle(roomId),
-          headerTintColor: "white",
+          // No title text: the center slot is the room/status pill.
+          headerTitle: () => (
+            <HeaderRoomPill roomId={roomId} wsStatus={wsStatus} onlineCount={onlineCount} />
+          ),
+          headerBackVisible: false,
+          headerLeft: () => <HeaderRoomsDisc onPress={handleRoomsPress} />,
           headerRight: () => (
             <HeaderAccount onPress={() => router.push("/(chat)/account")} />
-          ),
-          headerLeft: () => (
-            <OnlinePill wsStatus={wsStatus} onlineCount={onlineCount} />
           ),
           headerShadowVisible: false,
           headerTransparent: Platform.OS === "ios",

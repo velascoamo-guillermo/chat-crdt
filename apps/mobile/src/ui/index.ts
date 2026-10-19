@@ -33,4 +33,6 @@ export {
   glassPill,
   glassDisc,
   accessibleLabel,
+  accessibleGroup,
+  type GlassFallback,
 } from './modifiers';

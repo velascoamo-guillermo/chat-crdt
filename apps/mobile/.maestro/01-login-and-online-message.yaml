@@ -32,6 +32,11 @@
 # logs out through the real UI first so this flow deterministically exercises the
 # login screen every run, regardless of leftover Keychain state.
 #
+# The header has no title text: the room name lives in the center glass pill, which
+# screen readers see as ONE element labelled "# general, <status>, N online"
+# (headerPillA11yLabel, src/chat/headerPill.ts). Hence the "# general.*" regex — it
+# matches the pill's label as long as it starts with the room name.
+#
 # Review-round-1 fix: this flow used to send the "online" message right after login
 # without checking the WebSocket was actually up — an optimistic local insert would
 # have made the message appear and the assertion pass even with a dead socket, which
@@ -45,7 +50,7 @@ appId: com.chatcrdt.app
     clearState: true
 - runFlow:
     when:
-      visible: "# general"
+      visible: "# general.*"
     commands:
       - tapOn: "Account"
       - tapOn: "Log out"
@@ -54,7 +59,7 @@ appId: com.chatcrdt.app
 - tapOn: "Password"
 - inputText: "password123"
 - tapOn: "Login"
-- assertVisible: "# general"
+- assertVisible: "# general.*"
 - extendedWaitUntil:
     visible: "connected"
     timeout: 15000

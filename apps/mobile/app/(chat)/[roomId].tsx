@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -30,7 +30,7 @@ import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
 import { EmptyRoom } from "../../src/components/EmptyRoom";
 import { showEmptyRoom } from "../../src/chat/emptyRoomGate";
-import { shouldReanchor } from "../../src/chat/listAnchor";
+import { shouldReanchor, shouldFollowNewMessages } from "../../src/chat/listAnchor";
 import { HeaderAccount, HeaderRoomPill, HeaderRoomsDisc } from "../../src/components/ChatHeader";
 import { roomLabel, backAction } from "../../src/chat/headerPill";
 import { Composer } from "../../src/components/Composer";
@@ -141,6 +141,16 @@ export default function ChatScreen() {
   const atEndRef = useRef(false);
   const lastComposerHeight = useRef(0);
 
+  // Native scroll view, not FlashList.scrollToEnd: the latter computes its
+  // target from estimated item sizes and lands mid-list on Android. Two frames
+  // so a just-added row or padding change is laid out first.
+  const scrollListToEnd = useCallback((animated: boolean) => {
+    // getNativeScrollRef() is typed as the component, but returns the
+    // mounted ScrollView instance (our ChatScrollView).
+    const scroller = listRef.current?.getNativeScrollRef() as unknown as NativeScroller | null;
+    requestAnimationFrame(() => requestAnimationFrame(() => scroller?.scrollToEnd({ animated })));
+  }, []);
+
   const handleComposerLayout = useCallback((e: LayoutChangeEvent) => {
     const next = e.nativeEvent.layout.height;
     const reanchor = shouldReanchor({
@@ -150,15 +160,28 @@ export default function ChatScreen() {
     });
     lastComposerHeight.current = next;
     setComposerHeight(next);
-    // Native scroll view, not FlashList.scrollToEnd: the latter computes its
-    // target from estimated item sizes and lands mid-list on Android.
-    if (reanchor) {
-      // getNativeScrollRef() is typed as the component, but returns the
-      // mounted ScrollView instance (our ChatScrollView).
-      const scroller = listRef.current?.getNativeScrollRef() as unknown as NativeScroller | null;
-      requestAnimationFrame(() => scroller?.scrollToEnd({ animated: true }));
-    }
-  }, []);
+    if (reanchor) scrollListToEnd(true);
+  }, [scrollListToEnd]);
+
+  // FlashList's startRenderingFromBottom rests a short list on the viewport's
+  // bottom edge, ignoring paddingBottom — i.e. under the floating composer.
+  // Scrolling to the real end once it has loaded, and after each new message
+  // the reader should see, keeps the last bubble above the composer.
+  const sentByMeRef = useRef(false);
+  const prevCountRef = useRef(messages.length);
+  useEffect(() => {
+    const follow = shouldFollowNewMessages({
+      atEnd: atEndRef.current,
+      prevCount: prevCountRef.current,
+      nextCount: messages.length,
+      sentByMe: sentByMeRef.current,
+    });
+    prevCountRef.current = messages.length;
+    sentByMeRef.current = false;
+    if (follow) scrollListToEnd(true);
+  }, [messages.length, scrollListToEnd]);
+
+  const handleListLoad = useCallback(() => scrollListToEnd(false), [scrollListToEnd]);
 
   const handleEndVisible = useCallback((visible: boolean) => {
     atEndRef.current = visible;
@@ -186,6 +209,7 @@ export default function ChatScreen() {
       // failed and preserves the draft instead of clearing it.
       try {
         sendMessage(content);
+        sentByMeRef.current = true;
         setSendError(null);
       } catch (err) {
         setSendError(err instanceof Error ? err.message : "Failed to send message");
@@ -237,6 +261,7 @@ export default function ChatScreen() {
       <View style={styles.list}>
         <FlashList
           ref={listRef}
+          onLoad={handleListLoad}
           data={messages}
           renderItem={({ item, index }) => {
             const g = groupPosition(messages[index - 1], item, messages[index + 1], GROUP_GAP_MS, myUserId);

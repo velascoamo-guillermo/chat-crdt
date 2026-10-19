@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test';
-import { shouldReanchor } from './listAnchor';
+import { shouldReanchor, shouldFollowNewMessages } from './listAnchor';
 
 describe('shouldReanchor', () => {
   it('re-anchors when the composer grows while the end is visible (typing row, pill→card)', () => {
@@ -16,5 +16,21 @@ describe('shouldReanchor', () => {
   });
   it('ignores sub-pixel layout jitter', () => {
     expect(shouldReanchor({ atEnd: true, prevHeight: 60, nextHeight: 60.4 })).toBe(false);
+  });
+});
+
+describe('shouldFollowNewMessages', () => {
+  it('follows a message I just sent, even when scrolled up', () => {
+    expect(shouldFollowNewMessages({ atEnd: false, prevCount: 3, nextCount: 4, sentByMe: true })).toBe(true);
+  });
+  it('follows incoming messages while the reader is at the end', () => {
+    expect(shouldFollowNewMessages({ atEnd: true, prevCount: 3, nextCount: 5, sentByMe: false })).toBe(true);
+  });
+  it('leaves a reader browsing history alone on incoming messages', () => {
+    expect(shouldFollowNewMessages({ atEnd: false, prevCount: 3, nextCount: 4, sentByMe: false })).toBe(false);
+  });
+  it('does nothing when no message was added', () => {
+    expect(shouldFollowNewMessages({ atEnd: true, prevCount: 4, nextCount: 4, sentByMe: true })).toBe(false);
+    expect(shouldFollowNewMessages({ atEnd: true, prevCount: 4, nextCount: 3, sentByMe: false })).toBe(false);
   });
 });

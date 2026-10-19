@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { Stack } from "expo-router";
 import { useChatTheme, useUITheme } from "../../src/ui";
 
@@ -22,7 +23,12 @@ export default function ChatLayout() {
         dangerouslySingular
         options={{
           contentStyle: { backgroundColor: chat.bg },
-          headerStyle: { backgroundColor: "transparent" },
+          // iOS: transparent over content. Android's header is opaque (see
+          // [roomId].tsx): paint it the chat canvas so it re-themes live —
+          // transparent shows the window background, which doesn't.
+          headerStyle: {
+            backgroundColor: Platform.OS === "ios" ? "transparent" : chat.bg,
+          },
           headerTitleAlign: "center",
         }}
       />

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { View, useWindowDimensions } from "react-native";
+import { View, useColorScheme, useWindowDimensions } from "react-native";
 import MenuIcon from "@expo/material-symbols/menu.xml";
 import AccountCircle from "@expo/material-symbols/account_circle.xml";
 import {
@@ -21,6 +21,12 @@ import {
   headerPillA11yLabel,
   pillSlotWidth,
 } from "../chat/headerPill";
+
+// Header Hosts sit inside the native nav bar, which keeps a light appearance
+// in dark mode — glass would render light behind light text. Pin the system scheme.
+function useHostScheme(): "light" | "dark" {
+  return useColorScheme() === "dark" ? "dark" : "light";
+}
 
 const DISC = 38;
 const PILL_SLOT_HEIGHT = 44;
@@ -47,8 +53,9 @@ const HeaderDisc = memo(function HeaderDisc({
   onPress: () => void;
 }) {
   const t = useChatTheme();
+  const scheme = useHostScheme();
   return (
-    <Host matchContents={{ horizontal: true, vertical: true }}>
+    <Host matchContents={{ horizontal: true, vertical: true }} colorScheme={scheme}>
       <Button
         variant="text"
         onPress={onPress}
@@ -91,6 +98,7 @@ export const HeaderRoomPill = memo(function HeaderRoomPill({
   onlineCount: number;
 }) {
   const t = useChatTheme();
+  const scheme = useHostScheme();
   const { width } = useWindowDimensions();
   // Fixed-size slot: see pillSlotWidth for why the pill can't size itself here.
   return (
@@ -103,7 +111,7 @@ export const HeaderRoomPill = memo(function HeaderRoomPill({
         justifyContent: "center",
       }}
     >
-      <Host matchContents={{ horizontal: true, vertical: true }}>
+      <Host matchContents={{ horizontal: true, vertical: true }} colorScheme={scheme}>
         <Row
           spacing={6}
           alignment="center"

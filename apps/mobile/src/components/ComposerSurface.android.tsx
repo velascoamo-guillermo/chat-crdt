@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { StyleSheet, View, type LayoutChangeEvent } from "react-native";
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from "react-native-reanimated";
 import { Host, Column, Row, Spacer } from "@expo/ui/jetpack-compose";
@@ -14,15 +14,19 @@ const SPRING = { damping: 22, stiffness: 260, mass: 1 } as const;
 // is pinned to the shell's top and the shell to the keyboard edge, so the card
 // grows upward and the toolbar is revealed under the field — never pushed
 // past the bottom edge behind the nav bar (owner decision on T6 path B).
+// The outer slot snaps to the target height (like the iOS Host) so RN layout
+// — and the screen's list padding — updates once per change, not every frame.
 export function ComposerSurface({ expanded, field, send, chip, surface, border }: ComposerSurfaceProps) {
   const height = useSharedValue(0);
   const applied = useRef<number | null>(null);
+  const [slotHeight, setSlotHeight] = useState(0);
 
   const handleContentLayout = useCallback(
     (e: LayoutChangeEvent) => {
       const step = composerHeightStep(applied.current, e.nativeEvent.layout.height);
       if (!step) return;
       applied.current = step.height;
+      setSlotHeight(step.height);
       height.set(step.animate ? withSpring(step.height, SPRING) : step.height);
     },
     [height],
@@ -31,32 +35,37 @@ export function ComposerSurface({ expanded, field, send, chip, surface, border }
   const shellStyle = useAnimatedStyle(() => ({ height: height.get() }));
 
   return (
-    <Animated.View style={[styles.shell, { backgroundColor: surface, borderColor: border }, shellStyle]}>
-      <View style={styles.content} onLayout={handleContentLayout}>
-        <Host matchContents={{ vertical: true }}>
-          <Column verticalArrangement={{ spacedBy: 8 }} modifiers={expanded ? composerCard() : composerPill()}>
-            <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 8 }}>
-              {field}
-              {expanded ? null : send}
-            </Row>
-            {expanded ? (
+    <View style={[styles.slot, { height: slotHeight }]}>
+      <Animated.View style={[styles.shell, { backgroundColor: surface, borderColor: border }, shellStyle]}>
+        <View style={styles.content} onLayout={handleContentLayout}>
+          <Host matchContents={{ vertical: true }}>
+            <Column verticalArrangement={{ spacedBy: 8 }} modifiers={expanded ? composerCard() : composerPill()}>
               <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 8 }}>
-                {chip}
-                <Spacer modifiers={[weight(1)]} />
-                {send}
+                {field}
+                {expanded ? null : send}
               </Row>
-            ) : null}
-          </Column>
-        </Host>
-      </View>
-    </Animated.View>
+              {expanded ? (
+                <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 8 }}>
+                  {chip}
+                  <Spacer modifiers={[weight(1)]} />
+                  {send}
+                </Row>
+              ) : null}
+            </Column>
+          </Host>
+        </View>
+      </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  slot: { marginHorizontal: 12, marginBottom: 8 },
   shell: {
-    marginHorizontal: 12,
-    marginBottom: 8,
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
     borderRadius: 24,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",

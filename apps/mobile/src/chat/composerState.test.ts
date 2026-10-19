@@ -17,12 +17,6 @@ describe('composerMode', () => {
   ] as const)('focused=%p hasDraft=%p → %s', (focused, hasDraft, mode) => {
     expect(composerMode({ focused, hasDraft })).toBe(mode);
   });
-  it('stays a card after send while focus is retained (keyboard stays open)', () => {
-    expect(composerMode({ focused: true, hasDraft: false })).toBe('card');
-  });
-  it('stays a card when blurred with a kept draft (interactive dismiss, failed send)', () => {
-    expect(composerMode({ focused: false, hasDraft: true })).toBe('card');
-  });
 });
 
 describe('composerHeightStep (Android height wrapper)', () => {

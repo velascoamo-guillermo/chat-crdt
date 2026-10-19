@@ -80,6 +80,16 @@ echo "==> Building @chat-crdt/sync-engine (dist/ is gitignored — needed by bot
 (cd "$ROOT_DIR/packages/sync-engine" && bun run build)
 
 echo "==> Resetting 'default' room for a deterministic message count"
+# Terminate the app under test first: a still-running instance holds the old Yjs
+# doc in memory and would push it straight back into the freshly reset room when
+# the server restarts (flow 01's clearState relaunch comes too late). Any OTHER
+# device still in the room must be closed by hand for the same reason.
+APP_ID="com.chatcrdt.app"
+if [[ "${DEVICE_UDID:-}" == emulator-* ]]; then
+  adb -s "$DEVICE_UDID" shell am force-stop "$APP_ID" || true
+else
+  xcrun simctl terminate "${DEVICE_UDID:-booted}" "$APP_ID" 2>/dev/null || true
+fi
 "$SERVER_CTL" stop
 "$SERVER_CTL" reset-room
 

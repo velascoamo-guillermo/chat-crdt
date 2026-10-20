@@ -17,10 +17,12 @@ export const PORTFOLIO_SEED: PortfolioSeed = {
     {
       id: "01-compose",
       room: "trail-weekend",
+      androidRoom: "summit-plans",
       e2ee: false,
       history: [],
       live: [
         { from: "ios", text: "Hey! Want to do the Ridgeline loop this Saturday?" },
+        { from: "android", text: "Summit plans for Saturday? Thinking we start at dawn." },
       ],
     },
     {

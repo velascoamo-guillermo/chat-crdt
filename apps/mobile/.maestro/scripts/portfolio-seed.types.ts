@@ -32,6 +32,12 @@ export interface PortfolioClip {
   id: ClipId;
   /** Room name: /^[a-z0-9-]+$/, 2–64 chars, not "default". */
   room: string;
+  /**
+   * 01-compose only: a second empty room for the Android take — each
+   * platform's compose clip needs a room nobody has posted in yet. Its
+   * `live` line is the one with `from: "android"`.
+   */
+  androidRoom?: string;
   /** Room is E2EE-enabled on camera prep (from the iOS admin device). */
   e2ee: boolean;
   /**

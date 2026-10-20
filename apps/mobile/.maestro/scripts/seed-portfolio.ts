@@ -172,6 +172,9 @@ async function main(): Promise<void> {
   for (const clip of PORTFOLIO_SEED.clips) {
     const room = ROOM_SUFFIX ? `${clip.room}-${ROOM_SUFFIX}` : clip.room;
     await ensureRoom(room, sessions);
+    if (clip.androidRoom) {
+      await ensureRoom(ROOM_SUFFIX ? `${clip.androidRoom}-${ROOM_SUFFIX}` : clip.androidRoom, sessions);
+    }
     await seedHistory(room, clip.history, sessions);
     console.log(`[seed] clip ${clip.id} → room ${room}${clip.e2ee ? " (enable E2EE on device)" : ""}`);
   }

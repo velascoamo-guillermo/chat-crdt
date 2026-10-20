@@ -155,6 +155,11 @@ export default function ChatScreen() {
   const lastComposerHeight = useRef(0);
   // Set once the first settled composer measurement has snapped the list to the end.
   const snappedRef = useRef(false);
+  // A composer resize's padding lands in a later commit, so its end-scroll can
+  // run against the old content; Android then doesn't clamp the offset when the
+  // content shrinks (card→pill leaves a blank band). Repeat the end-scroll once
+  // the new content size is known. Holds the `animated` flag; a drag cancels it.
+  const pendingEndRef = useRef<boolean | null>(null);
 
   // Native scroll view, not FlashList.scrollToEnd: the latter computes its
   // target from estimated item sizes and lands mid-list on Android. Two frames
@@ -177,7 +182,10 @@ export default function ChatScreen() {
     if (action === "snap") snappedRef.current = true;
     lastComposerHeight.current = next;
     setComposerHeight(next);
-    if (action !== "none") scrollListToEnd(action === "animate");
+    if (action !== "none") {
+      pendingEndRef.current = action === "animate";
+      scrollListToEnd(action === "animate");
+    }
   }, [scrollListToEnd]);
 
   // FlashList's startRenderingFromBottom rests a short list on the viewport's
@@ -231,9 +239,20 @@ export default function ChatScreen() {
     },
     [refreshAtEnd],
   );
-  const handleListContentSize = useCallback((w: number, h: number) => {
-    metricsRef.current.contentHeight = h;
-    listScrollPropsRef.current.onContentSizeChange?.(w, h);
+  const handleListContentSize = useCallback(
+    (w: number, h: number) => {
+      metricsRef.current.contentHeight = h;
+      if (pendingEndRef.current !== null) {
+        scrollListToEnd(pendingEndRef.current);
+        pendingEndRef.current = null;
+      }
+      listScrollPropsRef.current.onContentSizeChange?.(w, h);
+    },
+    [scrollListToEnd],
+  );
+  const handleListBeginDrag = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    pendingEndRef.current = null;
+    listScrollPropsRef.current.onScrollBeginDrag?.(e);
   }, []);
   const handleContentInsetChange = useCallback(
     (insets: { bottom?: number }) => {
@@ -260,11 +279,12 @@ export default function ChatScreen() {
           onScroll={handleListScroll}
           onLayout={handleListLayout}
           onContentSizeChange={handleListContentSize}
+          onScrollBeginDrag={handleListBeginDrag}
           onContentInsetChange={handleContentInsetChange}
         />
       );
     },
-    [bottom, handleListScroll, handleListLayout, handleListContentSize, handleContentInsetChange],
+    [bottom, handleListScroll, handleListLayout, handleListContentSize, handleListBeginDrag, handleContentInsetChange],
   );
 
   // Left disc: pop back to Rooms, or — on a cold start straight into a room

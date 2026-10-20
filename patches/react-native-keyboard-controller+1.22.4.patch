@@ -50,3 +50,132 @@ index 554b38c..8fe1699 100644
            inverted={inverted}
            scrollIndicatorPadding={indicatorPadding}
            ScrollViewComponent={ScrollViewComponent}
+diff --git a/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/index.ios.ts b/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/index.ios.ts
+index 129a74b..b451424 100644
+--- a/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/index.ios.ts
++++ b/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/index.ios.ts
+@@ -1,4 +1,4 @@
+-import { useSharedValue } from "react-native-reanimated";
++import { scrollTo, useSharedValue } from "react-native-reanimated";
+ 
+ import { useKeyboardHandler } from "../../../hooks";
+ import useScrollState from "../../hooks/useScrollState";
+@@ -11,6 +11,7 @@ import {
+   isScrollAtEnd,
+   shouldShiftContent,
+ } from "./helpers";
++import { getMissedLift, getUnwoundScroll } from "./unwind";
+ 
+ import type { UseChatKeyboardOptions, UseChatKeyboardReturn } from "./types";
+ import type { AnimatedRef } from "react-native-reanimated";
+@@ -51,6 +52,9 @@ function useChatKeyboard(
+   const targetKeyboardHeight = useSharedValue(0);
+   const prevAbsorption = useSharedValue(0);
+   const isInteractiveDismissal = useSharedValue(false);
++  // chat-crdt patch: the offset the last shift commanded, until its
++  // transition ends; `scroll` lags it by a frame (see unwind.ts).
++  const pendingOffset = useSharedValue<number | null>(null);
+ 
+   const {
+     layout,
+@@ -197,9 +201,12 @@ function useChatKeyboard(
+           padding.value,
+           prevAbsorption.value,
+         );
+-        const relativeScroll = inverted
+-          ? scroll.value + prevScrollEffective
+-          : scroll.value - prevScrollEffective;
++        const relativeScroll = getUnwoundScroll({
++          scroll: scroll.value,
++          pendingOffset: pendingOffset.value,
++          prevScrollEffective,
++          inverted,
++        });
+ 
+         padding.value = effective;
+         prevAbsorption.value = minimumPaddingAbsorbed;
+@@ -232,6 +239,7 @@ function useChatKeyboard(
+           inverted,
+           actualTotalPadding,
+         );
++        pendingOffset.value = contentOffsetY.value;
+       },
+       onInteractive: () => {
+         "worklet";
+@@ -245,6 +253,16 @@ function useChatKeyboard(
+       },
+       onEnd: (e) => {
+         "worklet";
++        const missed = getMissedLift({
++          scroll: scroll.value,
++          pendingOffset: pendingOffset.value,
++          inverted,
++        });
++
++        if (missed !== null) {
++          scrollTo(scrollViewRef, 0, missed, false);
++        }
++        pendingOffset.value = null;
+ 
+         if (freeze.value) {
+           return;
+diff --git a/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/unwind.ts b/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/unwind.ts
+new file mode 100644
+index 0000000..eedde53
+--- /dev/null
++++ b/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/unwind.ts
+@@ -0,0 +1,54 @@
++// chat-crdt patch: no RN imports, so the app's bun tests can cover it.
++
++/**
++ * Scroll offset with the previous keyboard shift undone: the base the next
++ * shift is applied to. iOS can send two keyboard starts back to back (e.g.
++ * 320 then 347 when the keyboard returns after a modal), and the first
++ * shift's scroll lands a frame later, so `scroll` still reads the old offset.
++ * While a shift is pending, unwind from the offset it commanded instead.
++ */
++export const getUnwoundScroll = ({
++  scroll,
++  pendingOffset,
++  prevScrollEffective,
++  inverted,
++}: {
++  scroll: number;
++  pendingOffset: number | null;
++  prevScrollEffective: number;
++  inverted: boolean;
++}): number => {
++  "worklet";
++
++  const base = pendingOffset ?? scroll;
++
++  return inverted ? base + prevScrollEffective : base - prevScrollEffective;
++};
++
++/**
++ * The commanded lift offset if the scroll view stopped short of it, else null.
++ * A shift applied before its own contentInset commit gets clamped to the
++ * previous (smaller) inset's range; by the transition's end the inset has
++ * landed and the offset can be re-applied. A clamp only ever falls short, so
++ * a scroll past the target (e.g. the app scrolling to the end as the composer
++ * grows) is left alone.
++ */
++export const getMissedLift = ({
++  scroll,
++  pendingOffset,
++  inverted,
++}: {
++  scroll: number;
++  pendingOffset: number | null;
++  inverted: boolean;
++}): number | null => {
++  "worklet";
++
++  if (pendingOffset === null) {
++    return null;
++  }
++
++  const shortBy = inverted ? scroll - pendingOffset : pendingOffset - scroll;
++
++  return shortBy >= 1 ? pendingOffset : null;
++};

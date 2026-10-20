@@ -620,6 +620,24 @@ describe('SyncGateway', () => {
       expect(room.currentKeyId).toBe(1);
     });
 
+    it('keeps an epoch claimed while the room is still loading (read raced the claim)', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+      rooms.isMember.mockResolvedValue(true);
+      gateway.onModuleInit();
+      const listener = roomKeys.onEpochAdvanced.mock.calls[0][0] as (roomId: string, keyId: number) => void;
+      // The DB read returns the pre-claim epoch; the claim commits (and its
+      // event fires) before the load finishes and dbId is known.
+      prisma.room.findUnique.mockImplementation(async () => {
+        listener('db-a', 1);
+        return { id: 'db-a', name: 'team-a', currentKeyId: 0, yjsState: null };
+      });
+
+      await gateway.handleConnection(new FakeSocket() as any, fakeReq({ room: 'team-a', token: 'ok' }));
+
+      const room = (gateway as any).rooms.get('team-a') as RoomState;
+      expect(room.currentKeyId).toBe(1);
+    });
+
     it('never lowers a room epoch', () => {
       const room = seedRoom('team-a', 3);
       (room as any).dbId = 'db-a';

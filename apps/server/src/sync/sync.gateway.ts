@@ -79,6 +79,11 @@ export class SyncGateway
   // finds `false` evicts the socket (it missed the previous ping's pong).
   private readonly alive = new WeakMap<WebSocket, boolean>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  // T10: highest epoch seen per Prisma Room.id from claim events, kept even
+  // for rooms not (fully) loaded here — a claim can commit between a room's
+  // DB read and its dbId being known, and loadRoomState takes the max with
+  // this so that event isn't lost. One small entry per E2EE room.
+  private readonly epochByDbId = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -135,9 +140,9 @@ export class SyncGateway
     });
   }
 
-  /** Rooms not loaded here are skipped — they read the epoch from the DB on load. */
   private raiseEpoch(dbId: string, keyId: number): void {
     if (typeof keyId !== 'number') return;
+    this.epochByDbId.set(dbId, Math.max(this.epochByDbId.get(dbId) ?? 0, keyId));
     for (const room of this.rooms.values()) {
       if (room.dbId === dbId) room.currentKeyId = Math.max(room.currentKeyId, keyId);
     }
@@ -474,8 +479,12 @@ export class SyncGateway
     const dbRoom = await this.prisma.room.findUnique({ where: { name: room.roomId } });
     if (dbRoom) {
       room.dbId = dbRoom.id;
-      // max(): an epoch event may have raced ahead of this load.
-      room.currentKeyId = Math.max(room.currentKeyId, dbRoom.currentKeyId);
+      // max(): an epoch claim may have committed after the read above.
+      room.currentKeyId = Math.max(
+        room.currentKeyId,
+        dbRoom.currentKeyId,
+        this.epochByDbId.get(dbRoom.id) ?? 0,
+      );
     }
     if (dbRoom?.yjsState) {
       Y.applyUpdate(room.doc, new Uint8Array(dbRoom.yjsState));

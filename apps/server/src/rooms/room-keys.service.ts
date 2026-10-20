@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { EventEmitter } from 'events';
 import { PrismaService } from '../prisma/prisma.service';
 import { UploadKeysDto } from './dto/upload-keys.dto';
 
@@ -27,8 +28,22 @@ export interface RoomKeyGrantView {
  * grant list. The server never wraps or unwraps a key — it only routes
  * ciphertext grants clients hand it.
  */
+export type EpochAdvancedListener = (roomId: string, currentKeyId: number) => void;
+
+const EPOCH_ADVANCED = 'epochAdvanced';
+
 @Injectable()
 export class RoomKeysService {
+  // T10: in-process notification of a committed epoch claim, so the sync
+  // gateway can start rejecting plaintext in that room right away (it
+  // fans it out to other instances itself, over Redis).
+  private readonly epochEvents = new EventEmitter();
+
+  onEpochAdvanced(listener: EpochAdvancedListener): () => void {
+    this.epochEvents.on(EPOCH_ADVANCED, listener);
+    return () => this.epochEvents.off(EPOCH_ADVANCED, listener);
+  }
+
   constructor(private readonly prisma: PrismaService) {}
 
   async getPending(roomId: string, requesterId: string): Promise<PendingGrant[]> {
@@ -153,7 +168,7 @@ export class RoomKeysService {
       }
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const claimed = await this.prisma.$transaction(async (tx) => {
       // Conditional increment + grant insert in one transaction: either
       // both commit or neither does, closing the orphan-epoch window a
       // two-step version would leave open (ADR-010, Rotation authority).
@@ -167,6 +182,8 @@ export class RoomKeysService {
       await this.upsertGrants(tx, roomId, dto.grants);
       return { currentKeyId: claimedKeyId };
     });
+    this.epochEvents.emit(EPOCH_ADVANCED, roomId, claimed.currentKeyId);
+    return claimed;
   }
 
   /**

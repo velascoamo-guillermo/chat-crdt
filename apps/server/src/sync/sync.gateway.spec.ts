@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { SyncGateway } from './sync.gateway';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoomsService } from '../rooms/rooms.service';
+import { RoomKeysService } from '../rooms/room-keys.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { FakeSocket, fakeReq, redisMock } from './__test__/fakes';
 import * as Y from 'yjs';
@@ -22,6 +23,7 @@ function metricsMock() {
     observePersistDurationSeconds: jest.fn(),
     setYjsStateBytes: jest.fn(),
     removeYjsStateBytes: jest.fn(),
+    incE2eeRejectedUpdates: jest.fn(),
   };
 }
 
@@ -33,6 +35,7 @@ describe('SyncGateway', () => {
   let pub: ReturnType<typeof redisMock>;
   let sub: ReturnType<typeof redisMock>;
   let metrics: ReturnType<typeof metricsMock>;
+  let roomKeys: { onEpochAdvanced: jest.Mock };
 
   beforeEach(async () => {
     jwt = { verify: jest.fn() };
@@ -47,6 +50,7 @@ describe('SyncGateway', () => {
     pub = redisMock();
     sub = redisMock();
     metrics = metricsMock();
+    roomKeys = { onEpochAdvanced: jest.fn() };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -57,6 +61,7 @@ describe('SyncGateway', () => {
         { provide: 'REDIS_PUB', useValue: pub },
         { provide: 'REDIS_SUB', useValue: sub },
         { provide: MetricsService, useValue: metrics },
+        { provide: RoomKeysService, useValue: roomKeys },
       ],
     }).compile();
 
@@ -441,6 +446,189 @@ describe('SyncGateway', () => {
       gateway.handleDisconnect(client as any);
 
       expect(metrics.decWsConnections).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('E2EE plaintext gate (T10)', () => {
+    const ENVELOPE = 'E2E1{"v":1,"keyId":1,"nonce":"bm9uY2U=","ciphertext":"Y2lwaGVy"}';
+    const SECRET = 'plaintext that must not leak';
+
+    function msg(id: string, content: string) {
+      return { id, roomId: 'team-a', userId: 'u1', username: 'bob', content, createdAt: 1 };
+    }
+
+    function seedRoom(roomId: string, currentKeyId: number): RoomState {
+      const room = new RoomState(roomId);
+      room.currentKeyId = currentKeyId;
+      (gateway as any).rooms.set(roomId, room);
+      (gateway as any).registerRoomUpdateHandler(room);
+      return room;
+    }
+
+    /** A client's MSG_SYNC frame carrying the update for one mutation. */
+    function updateFrame(mutate: (doc: Y.Doc) => void): Buffer {
+      const clientDoc = new Y.Doc();
+      let update: Uint8Array | null = null;
+      clientDoc.on('update', (u: Uint8Array) => {
+        update = u;
+      });
+      mutate(clientDoc);
+      const enc = encoding.createEncoder();
+      encoding.writeVarUint(enc, 0); // MSG_SYNC
+      syncProtocol.writeUpdate(enc, update!);
+      return Buffer.from(encoding.toUint8Array(enc));
+    }
+
+    function step2Frame(mutate: (doc: Y.Doc) => void): Buffer {
+      const clientDoc = new Y.Doc();
+      mutate(clientDoc);
+      const enc = encoding.createEncoder();
+      encoding.writeVarUint(enc, 0); // MSG_SYNC
+      syncProtocol.writeSyncStep2(enc, clientDoc);
+      return Buffer.from(encoding.toUint8Array(enc));
+    }
+
+    it('rejects a plaintext message update into an E2EE room: not applied, not broadcast, logged + counted', () => {
+      const room = seedRoom('team-a', 1);
+      const sender = new FakeSocket();
+      const other = new FakeSocket();
+      room.clients.add(sender as any);
+      room.clients.add(other as any);
+      const warn = jest.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+
+      (gateway as any).handleMessage(
+        sender,
+        room,
+        updateFrame((d) => d.getArray('messages').push([msg('m1', SECRET)])),
+      );
+
+      expect(room.doc.getArray('messages').length).toBe(0);
+      expect(other.send).not.toHaveBeenCalled();
+      expect(pub.publish).not.toHaveBeenCalled();
+      expect(metrics.incE2eeRejectedUpdates).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('team-a'));
+      // The rejection log must never echo message content.
+      for (const [line] of warn.mock.calls) expect(String(line)).not.toContain(SECRET);
+    });
+
+    it('rejects a sync step2 carrying a plaintext message into an E2EE room', () => {
+      const room = seedRoom('team-a', 1);
+      const sender = new FakeSocket();
+      room.clients.add(sender as any);
+      jest.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+
+      (gateway as any).handleMessage(
+        sender,
+        room,
+        step2Frame((d) => d.getArray('messages').push([msg('m1', ENVELOPE), msg('m2', SECRET)])),
+      );
+
+      expect(room.doc.getArray('messages').length).toBe(0);
+      expect(metrics.incE2eeRejectedUpdates).toHaveBeenCalledTimes(1);
+    });
+
+    it('accepts an enveloped message update into an E2EE room and broadcasts it', () => {
+      const room = seedRoom('team-a', 1);
+      const sender = new FakeSocket();
+      const other = new FakeSocket();
+      room.clients.add(sender as any);
+      room.clients.add(other as any);
+
+      (gateway as any).handleMessage(
+        sender,
+        room,
+        updateFrame((d) => d.getArray('messages').push([msg('m1', ENVELOPE)])),
+      );
+
+      expect(room.doc.getArray('messages').length).toBe(1);
+      expect(other.send).toHaveBeenCalledTimes(1);
+      expect(metrics.incE2eeRejectedUpdates).not.toHaveBeenCalled();
+    });
+
+    it('leaves a plaintext room (currentKeyId 0) unaffected', () => {
+      const room = seedRoom('team-b', 0);
+      const sender = new FakeSocket();
+      const other = new FakeSocket();
+      room.clients.add(sender as any);
+      room.clients.add(other as any);
+
+      (gateway as any).handleMessage(
+        sender,
+        room,
+        updateFrame((d) => d.getArray('messages').push([msg('m1', 'hello')])),
+      );
+
+      expect(room.doc.getArray('messages').length).toBe(1);
+      expect(other.send).toHaveBeenCalledTimes(1);
+      expect(metrics.incE2eeRejectedUpdates).not.toHaveBeenCalled();
+    });
+
+    it('still answers a sync step1 in an E2EE room', () => {
+      const room = seedRoom('team-a', 1);
+      const sender = new FakeSocket();
+      room.clients.add(sender as any);
+
+      const enc = encoding.createEncoder();
+      encoding.writeVarUint(enc, 0); // MSG_SYNC
+      syncProtocol.writeSyncStep1(enc, new Y.Doc());
+      (gateway as any).handleMessage(sender, room, Buffer.from(encoding.toUint8Array(enc)));
+
+      expect(sender.send).toHaveBeenCalledTimes(1); // step2 reply
+    });
+
+    it('loads the room epoch from the database when the room is first loaded', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+      rooms.isMember.mockResolvedValue(true);
+      prisma.room.findUnique.mockResolvedValue({ id: 'db-a', name: 'team-a', currentKeyId: 2, yjsState: null });
+
+      await gateway.handleConnection(new FakeSocket() as any, fakeReq({ room: 'team-a', token: 'ok' }));
+
+      const room = (gateway as any).rooms.get('team-a') as RoomState;
+      expect(room.currentKeyId).toBe(2);
+    });
+
+    it('raises a loaded room to a newly claimed epoch and tells other instances via Redis', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+      rooms.isMember.mockResolvedValue(true);
+      prisma.room.findUnique.mockResolvedValue({ id: 'db-a', name: 'team-a', currentKeyId: 0, yjsState: null });
+      gateway.onModuleInit();
+      await gateway.handleConnection(new FakeSocket() as any, fakeReq({ room: 'team-a', token: 'ok' }));
+      const listener = roomKeys.onEpochAdvanced.mock.calls[0][0] as (roomId: string, keyId: number) => void;
+
+      listener('db-a', 1);
+
+      const room = (gateway as any).rooms.get('team-a') as RoomState;
+      expect(room.currentKeyId).toBe(1);
+      expect(pub.publish).toHaveBeenCalledWith('room:epoch:db-a', expect.stringContaining('"keyId":1'));
+    });
+
+    it('raises a loaded room to an epoch claimed on another instance (Redis)', async () => {
+      jwt.verify.mockReturnValue({ sub: 'user-1' });
+      rooms.isMember.mockResolvedValue(true);
+      prisma.room.findUnique.mockResolvedValue({ id: 'db-a', name: 'team-a', currentKeyId: 0, yjsState: null });
+      gateway.onModuleInit();
+      await gateway.handleConnection(new FakeSocket() as any, fakeReq({ room: 'team-a', token: 'ok' }));
+      const onPmessage = sub.on.mock.calls.find(([event]) => event === 'pmessage')![1] as (
+        pattern: string,
+        channel: string,
+        message: string,
+      ) => void;
+
+      onPmessage('room:epoch:*', 'room:epoch:db-a', JSON.stringify({ origin: 'other-instance', keyId: 1 }));
+
+      const room = (gateway as any).rooms.get('team-a') as RoomState;
+      expect(room.currentKeyId).toBe(1);
+    });
+
+    it('never lowers a room epoch', () => {
+      const room = seedRoom('team-a', 3);
+      (room as any).dbId = 'db-a';
+      gateway.onModuleInit();
+      const listener = roomKeys.onEpochAdvanced.mock.calls[0][0] as (roomId: string, keyId: number) => void;
+
+      listener('db-a', 1);
+
+      expect(room.currentKeyId).toBe(3);
     });
   });
 });

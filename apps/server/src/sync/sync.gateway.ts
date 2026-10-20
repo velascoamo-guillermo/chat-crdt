@@ -17,7 +17,9 @@ import type Redis from 'ioredis';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoomsService } from '../rooms/rooms.service';
+import { RoomKeysService } from '../rooms/room-keys.service';
 import { RoomState } from './room-state';
+import { isEnvelopedOnlyUpdate } from './e2ee-update-gate';
 import { MetricsService } from '../metrics/metrics.service';
 import { randomUUID } from 'crypto';
 
@@ -28,6 +30,12 @@ const PERSIST_DEBOUNCE_MS = 5_000;
 
 const UPDATE_CHANNEL_PREFIX = 'room:update:';
 const AWARENESS_CHANNEL_PREFIX = 'room:awareness:';
+const EPOCH_CHANNEL_PREFIX = 'room:epoch:'; // + Prisma Room.id
+
+// y-protocols/sync message types carrying a doc update (step1 only carries a
+// state vector).
+const SYNC_STEP2 = 1;
+const SYNC_UPDATE = 2;
 
 // DoS guards: reject oversized frames and clients that flood the socket.
 const MAX_WS_MESSAGE_BYTES = 64 * 1024; // 64 KiB per frame
@@ -40,6 +48,11 @@ const YJS_STATE_WARN_BYTES = 1_000_000; // 1 MB — ADR-009 compaction trigger
 interface RedisPayload {
   origin: string;
   update: string; // base64 incremental update
+}
+
+interface EpochPayload {
+  origin: string;
+  keyId: number;
 }
 
 interface RateState {
@@ -74,16 +87,27 @@ export class SyncGateway
     @Inject('REDIS_PUB') private readonly pub: Redis,
     @Inject('REDIS_SUB') private readonly sub: Redis,
     private readonly metrics: MetricsService,
+    private readonly roomKeys: RoomKeysService,
   ) {}
 
   onModuleInit() {
-    this.sub.psubscribe(`${UPDATE_CHANNEL_PREFIX}*`, `${AWARENESS_CHANNEL_PREFIX}*`);
+    this.sub.psubscribe(
+      `${UPDATE_CHANNEL_PREFIX}*`,
+      `${AWARENESS_CHANNEL_PREFIX}*`,
+      `${EPOCH_CHANNEL_PREFIX}*`,
+    );
     this.sub.on('pmessage', (_pattern: string, channel: string, message: string) => {
-      const payload: RedisPayload = JSON.parse(message);
+      const parsed: unknown = JSON.parse(message);
 
       // Skip messages this instance published — local clients already received them.
-      if (payload.origin === this.instanceId) return;
+      if ((parsed as { origin?: unknown }).origin === this.instanceId) return;
 
+      if (channel.startsWith(EPOCH_CHANNEL_PREFIX)) {
+        this.raiseEpoch(channel.slice(EPOCH_CHANNEL_PREFIX.length), (parsed as EpochPayload).keyId);
+        return;
+      }
+
+      const payload = parsed as RedisPayload;
       if (channel.startsWith(UPDATE_CHANNEL_PREFIX)) {
         const room = this.rooms.get(channel.slice(UPDATE_CHANNEL_PREFIX.length));
         if (!room) return;
@@ -101,6 +125,22 @@ export class SyncGateway
         );
       }
     });
+
+    // T10: an epoch claimed through this instance's REST API — apply it
+    // locally, then tell the other instances.
+    this.roomKeys.onEpochAdvanced((dbId, keyId) => {
+      this.raiseEpoch(dbId, keyId);
+      const payload: EpochPayload = { origin: this.instanceId, keyId };
+      this.pub.publish(`${EPOCH_CHANNEL_PREFIX}${dbId}`, JSON.stringify(payload));
+    });
+  }
+
+  /** Rooms not loaded here are skipped — they read the epoch from the DB on load. */
+  private raiseEpoch(dbId: string, keyId: number): void {
+    if (typeof keyId !== 'number') return;
+    for (const room of this.rooms.values()) {
+      if (room.dbId === dbId) room.currentKeyId = Math.max(room.currentKeyId, keyId);
+    }
   }
 
   afterInit(server: Server): void {
@@ -253,6 +293,19 @@ export class SyncGateway
 
       if (msgType === MSG_SYNC) {
         this.metrics.incMessages('sync');
+        if (this.isPlaintextIntoE2eeRoom(room, decoder)) {
+          // Not applied, so never broadcast, published or persisted. The
+          // sender keeps its local insert (its doc diverges from the room's);
+          // honest clients never get here since they gate the composer until
+          // the room's E2EE state is confirmed (T10 client fix). Never log
+          // the update itself — it holds the plaintext.
+          this.metrics.incE2eeRejectedUpdates();
+          this.logger.warn(
+            `Rejected sync update with a non-E2E1 message in E2EE room "${room.roomId}" ` +
+              `(epoch ${room.currentKeyId})`,
+          );
+          return;
+        }
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MSG_SYNC);
         // readSyncMessage applies the client's update to room.doc with `client`
@@ -273,6 +326,21 @@ export class SyncGateway
     } catch (err: any) {
       this.logger.error(`Error handling message: ${err.message}`);
     }
+  }
+
+  /**
+   * T10 defense in depth: in a room whose currentKeyId > 0, a sync step2 or
+   * update that inserts any message without an E2E1 envelope is rejected
+   * whole. Peeks on a clone of the decoder so the caller still reads the
+   * message from the start. The 'default' lobby is always plaintext (ADR-010
+   * amendment #3), so it's never gated.
+   */
+  private isPlaintextIntoE2eeRoom(room: RoomState, decoder: decoding.Decoder): boolean {
+    if (room.currentKeyId <= 0 || room.roomId === 'default') return false;
+    const peek = decoding.clone(decoder);
+    const syncType = decoding.readVarUint(peek);
+    if (syncType !== SYNC_STEP2 && syncType !== SYNC_UPDATE) return false;
+    return !isEnvelopedOnlyUpdate(decoding.readVarUint8Array(peek));
   }
 
   /** Fixed-window per-client message rate limiter. */
@@ -404,14 +472,20 @@ export class SyncGateway
 
   private async loadRoomState(room: RoomState): Promise<void> {
     const dbRoom = await this.prisma.room.findUnique({ where: { name: room.roomId } });
+    if (dbRoom) {
+      room.dbId = dbRoom.id;
+      // max(): an epoch event may have raced ahead of this load.
+      room.currentKeyId = Math.max(room.currentKeyId, dbRoom.currentKeyId);
+    }
     if (dbRoom?.yjsState) {
       Y.applyUpdate(room.doc, new Uint8Array(dbRoom.yjsState));
     } else {
-      await this.prisma.room.upsert({
+      const upserted = await this.prisma.room.upsert({
         where: { name: room.roomId },
         create: { name: room.roomId },
         update: {},
       });
+      room.dbId ??= upserted?.id ?? null;
     }
   }
 

@@ -54,6 +54,16 @@ export function useSync(roomId: string) {
   // hook (leaving/re-entering the room), not a live flag flip.
   const contentCipher = useE2eeCipher(roomId);
 
+  // T10: authoritative E2EE-state refresh on every room entry. The cached
+  // rooms list may predate an admin enabling E2EE; until this settles the
+  // room reads 'unknown' (useRoomE2eeState) and the composer stays gated.
+  // Its own effect so the engine rebuild below (on contentCipher) doesn't
+  // refetch. WS reconnects refresh again from onStatusChange.
+  useEffect(() => {
+    if (!token || roomId === 'default') return;
+    void useRoomsStore.getState().refreshRoom(roomId);
+  }, [token, roomId]);
+
   useEffect(() => {
     if (!token || !user) return;
 
@@ -120,7 +130,14 @@ export function useSync(roomId: string) {
         url: `${WS_URL}?room=${roomId}`,
         token,
         username: user.username,
-        onStatusChange: (status) => setWsStatus(roomId, status),
+        onStatusChange: (status) => {
+          setWsStatus(roomId, status);
+          // T10: the room may have been E2EE-enabled while we were
+          // disconnected — re-confirm on every (re)connect.
+          if (status === 'connected' && roomId !== 'default') {
+            void useRoomsStore.getState().refreshRoom(roomId);
+          }
+        },
         onAuthError: (code) => {
           if (code === NOT_MEMBER_CLOSE_CODE) {
             setMembership('not-a-member');

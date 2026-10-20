@@ -17,7 +17,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
 import { useRoomMessages, useRoomWsStatus, useRoomCrypto } from "../../src/store/chat.store";
-import { useRoomsStore } from "../../src/store/rooms.store";
+import { useRoomsStore, useRoomE2eeState } from "../../src/store/rooms.store";
 import { useSync } from "../../src/hooks/useSync";
 import { useEnableRoomE2ee } from "../../src/hooks/useE2ee";
 import { isComposerReady } from "../../src/crypto/composerGate";
@@ -109,7 +109,11 @@ export default function ChatScreen() {
   const headerHeight = top + HEADER_BASE;
 
   const roomSummary = useRoomsStore((s) => s.rooms.find((r) => r.name === roomId));
-  const canEnableE2ee = roomId !== "default" && roomSummary?.role === "admin" && roomSummary.currentKeyId === 0;
+  // T10: authoritative (refreshed-on-entry) E2EE state; the cached summary
+  // alone can be stale. 'unknown' gates the composer below.
+  const e2eeState = useRoomE2eeState(roomId);
+  const canEnableE2ee =
+    roomId !== "default" && roomSummary?.role === "admin" && e2eeState === "plaintext";
 
   // ADR-010 send gate (code review round 1, Critical #1/#3): the room can be
   // E2EE-enabled (currentKeyId > 0) before this device has actually loaded
@@ -119,7 +123,7 @@ export default function ChatScreen() {
   // recomputes live as grants load.
   const currentKeyId = roomSummary?.currentKeyId ?? 0;
   const roomCrypto = useRoomCrypto(roomId);
-  const composerReady = isComposerReady(currentKeyId, roomCrypto?.cipher ?? null);
+  const composerReady = isComposerReady(e2eeState, currentKeyId, roomCrypto?.cipher ?? null);
 
   const [composerHeight, setComposerHeight] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -218,7 +222,7 @@ export default function ChatScreen() {
           {!composerReady ? (
             <View style={[styles.e2eeBanner, { backgroundColor: t.surface, borderColor: t.border }]}>
               <Text style={[styles.e2eeBannerText, { color: t.textSecondary }]}>
-                🔒 Waiting for encryption key…
+                {e2eeState === "unknown" ? "🔒 Checking encryption…" : "🔒 Waiting for encryption key…"}
               </Text>
             </View>
           ) : null}

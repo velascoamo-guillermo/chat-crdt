@@ -1,21 +1,27 @@
 import { describe, it, expect } from 'bun:test';
-import { composerResizeScroll, shouldFollowNewMessages, isAtListEnd, isSpuriousResetToTop } from './listAnchor';
+import { composerResizeScroll, shouldFollowNewMessages, isAtListEnd } from './listAnchor';
 
 describe('composerResizeScroll', () => {
   it('animates back to the end when the composer grows while the end is visible (typing row, pill→card)', () => {
-    expect(composerResizeScroll({ atEnd: true, prevHeight: 60, nextHeight: 100 })).toBe('animate');
+    expect(composerResizeScroll({ atEnd: true, snapped: true, prevHeight: 60, nextHeight: 100 })).toBe('animate');
   });
   it('animates back to the end when the composer shrinks while the end is visible (card→pill)', () => {
-    expect(composerResizeScroll({ atEnd: true, prevHeight: 100, nextHeight: 60 })).toBe('animate');
+    expect(composerResizeScroll({ atEnd: true, snapped: true, prevHeight: 100, nextHeight: 60 })).toBe('animate');
   });
   it('leaves the scroll alone when the reader scrolled up into history', () => {
-    expect(composerResizeScroll({ atEnd: false, prevHeight: 60, nextHeight: 100 })).toBe('none');
+    expect(composerResizeScroll({ atEnd: false, snapped: true, prevHeight: 60, nextHeight: 100 })).toBe('none');
   });
-  it('snaps to the end on the first measurement: the padding it adds lands after the list settled at the bottom', () => {
-    expect(composerResizeScroll({ atEnd: false, prevHeight: 0, nextHeight: 60 })).toBe('snap');
+  it('snaps on the first settled measurement even after a margin-only layout (8pt → real height)', () => {
+    expect(composerResizeScroll({ atEnd: false, snapped: false, prevHeight: 8, nextHeight: 100 })).toBe('snap');
+  });
+  it('does not snap on a margin-only first layout', () => {
+    expect(composerResizeScroll({ atEnd: false, snapped: false, prevHeight: 0, nextHeight: 8 })).toBe('none');
+  });
+  it('snaps only once', () => {
+    expect(composerResizeScroll({ atEnd: false, snapped: true, prevHeight: 0, nextHeight: 100 })).toBe('none');
   });
   it('ignores sub-pixel layout jitter', () => {
-    expect(composerResizeScroll({ atEnd: true, prevHeight: 60, nextHeight: 60.4 })).toBe('none');
+    expect(composerResizeScroll({ atEnd: true, snapped: true, prevHeight: 60, nextHeight: 60.4 })).toBe('none');
   });
 });
 
@@ -55,20 +61,5 @@ describe('isAtListEnd', () => {
   });
   it('is false before the scroll view is measured', () => {
     expect(isAtListEnd({ visibleHeight: 0, contentHeight: 0, bottomInset: 0, offset: 0 })).toBe(false);
-  });
-});
-
-describe('isSpuriousResetToTop', () => {
-  it('flags a jump to 0 that no drag, momentum or own scroll caused (Fabric contentOffset reset)', () => {
-    expect(isSpuriousResetToTop({ prevOffset: 1297, nextOffset: 0, userScrolling: false })).toBe(true);
-  });
-  it('accepts reaching the top by dragging or momentum', () => {
-    expect(isSpuriousResetToTop({ prevOffset: 40, nextOffset: 0, userScrolling: true })).toBe(false);
-  });
-  it('ignores ordinary offset changes', () => {
-    expect(isSpuriousResetToTop({ prevOffset: 1297, nextOffset: 1310, userScrolling: false })).toBe(false);
-  });
-  it('ignores a list that was already at the top', () => {
-    expect(isSpuriousResetToTop({ prevOffset: 0, nextOffset: 0, userScrolling: false })).toBe(false);
   });
 });

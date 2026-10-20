@@ -36,7 +36,6 @@ import {
   composerResizeScroll,
   shouldFollowNewMessages,
   isAtListEnd,
-  isSpuriousResetToTop,
   type ScrollMetrics,
 } from "../../src/chat/listAnchor";
 import { HeaderAccount, HeaderRoomPill, HeaderRoomsDisc } from "../../src/components/ChatHeader";
@@ -53,10 +52,7 @@ const LIST_PADDING = 8;
 const HEADER_BASE = Platform.OS === "ios" ? 44 : 56;
 
 // The part of the mounted ScrollView instance the re-anchor uses.
-type NativeScroller = {
-  scrollToEnd: (options?: { animated?: boolean }) => void;
-  scrollTo: (options: { y: number; animated?: boolean }) => void;
-};
+type NativeScroller = { scrollToEnd: (options?: { animated?: boolean }) => void };
 
 // QA-only readout for the Maestro E2E offline-sync flow (apps/mobile/.maestro).
 // Requires BOTH __DEV__ (never true in a release build, regardless of env
@@ -156,8 +152,9 @@ export default function ChatScreen() {
   // layouts never fight startRenderingFromBottom.
   const metricsRef = useRef<ScrollMetrics>({ offset: 0, visibleHeight: 0, contentHeight: 0, bottomInset: 0 });
   const atEndRef = useRef(false);
-  const userScrollingRef = useRef(false);
   const lastComposerHeight = useRef(0);
+  // Set once the first settled composer measurement has snapped the list to the end.
+  const snappedRef = useRef(false);
 
   // Native scroll view, not FlashList.scrollToEnd: the latter computes its
   // target from estimated item sizes and lands mid-list on Android. Two frames
@@ -173,9 +170,11 @@ export default function ChatScreen() {
     const next = e.nativeEvent.layout.height;
     const action = composerResizeScroll({
       atEnd: atEndRef.current,
+      snapped: snappedRef.current,
       prevHeight: lastComposerHeight.current,
       nextHeight: next,
     });
+    if (action === "snap") snappedRef.current = true;
     lastComposerHeight.current = next;
     setComposerHeight(next);
     if (action !== "none") scrollListToEnd(action === "animate");
@@ -205,12 +204,52 @@ export default function ChatScreen() {
   // re-anchor pair, but on Android with Reanimated 4.7 its scroll correction
   // throws "Object is not a function": useExtraContentPadding calls the
   // animated ref inside a nested requestAnimationFrame worklet.)
+  // Stable handlers: FlashList's own scroll-view props are read through a ref,
+  // so its re-renders (e.g. while scrolling) don't hand keyboard-controller a
+  // new onContentInsetChange and re-register its UI-thread reaction.
+  const listScrollPropsRef = useRef<ScrollViewProps>({});
+  const refreshAtEnd = useCallback(() => {
+    atEndRef.current = isAtListEnd(metricsRef.current);
+  }, []);
+  const handleListScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const n = e.nativeEvent;
+      const m = metricsRef.current;
+      m.offset = n.contentOffset.y;
+      m.contentHeight = n.contentSize.height;
+      m.visibleHeight = n.layoutMeasurement.height;
+      refreshAtEnd();
+      listScrollPropsRef.current.onScroll?.(e);
+    },
+    [refreshAtEnd],
+  );
+  const handleListLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      metricsRef.current.visibleHeight = e.nativeEvent.layout.height;
+      refreshAtEnd();
+      listScrollPropsRef.current.onLayout?.(e);
+    },
+    [refreshAtEnd],
+  );
+  const handleListContentSize = useCallback((w: number, h: number) => {
+    metricsRef.current.contentHeight = h;
+    listScrollPropsRef.current.onContentSizeChange?.(w, h);
+  }, []);
+  const handleContentInsetChange = useCallback(
+    (insets: { bottom?: number }) => {
+      metricsRef.current.bottomInset = insets.bottom ?? 0;
+      refreshAtEnd();
+    },
+    [refreshAtEnd],
+  );
+
+  // (keyboard-controller's extraContentPadding would replace this padding +
+  // re-anchor pair, but on Android with Reanimated 4.7 its scroll correction
+  // throws "Object is not a function": useExtraContentPadding calls the
+  // animated ref inside a nested requestAnimationFrame worklet.)
   const renderScrollComponent = useCallback(
     (props: ScrollViewProps) => {
-      const m = metricsRef.current;
-      const refreshAtEnd = () => {
-        atEndRef.current = isAtListEnd(m);
-      };
+      listScrollPropsRef.current = props;
       return (
         <ChatScrollView
           {...props}
@@ -218,61 +257,14 @@ export default function ChatScreen() {
           // view offset); open, it rides the keyboard — so the keyboard lift
           // only covers what the static `bottom` padding doesn't.
           offset={bottom}
-          onScrollBeginDrag={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-            userScrollingRef.current = true;
-            props.onScrollBeginDrag?.(e);
-          }}
-          onScrollEndDrag={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-            userScrollingRef.current = false;
-            props.onScrollEndDrag?.(e);
-          }}
-          onMomentumScrollBegin={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-            userScrollingRef.current = true;
-            props.onMomentumScrollBegin?.(e);
-          }}
-          onMomentumScrollEnd={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-            userScrollingRef.current = false;
-            props.onMomentumScrollEnd?.(e);
-          }}
-          onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-            const n = e.nativeEvent;
-            // iOS Fabric × keyboard-controller: a re-render with the keyboard
-            // open resets the offset to 0 (see isSpuriousResetToTop). Undo it
-            // imperatively and keep FlashList on the reader's position.
-            if (
-              isSpuriousResetToTop({
-                prevOffset: m.offset,
-                nextOffset: n.contentOffset.y,
-                userScrolling: userScrollingRef.current,
-              })
-            ) {
-              const scroller = listRef.current?.getNativeScrollRef() as unknown as NativeScroller | null;
-              scroller?.scrollTo({ y: m.offset, animated: false });
-              return;
-            }
-            m.offset = n.contentOffset.y;
-            m.contentHeight = n.contentSize.height;
-            m.visibleHeight = n.layoutMeasurement.height;
-            refreshAtEnd();
-            props.onScroll?.(e);
-          }}
-          onLayout={(e: LayoutChangeEvent) => {
-            m.visibleHeight = e.nativeEvent.layout.height;
-            refreshAtEnd();
-            props.onLayout?.(e);
-          }}
-          onContentSizeChange={(w: number, h: number) => {
-            m.contentHeight = h;
-            props.onContentSizeChange?.(w, h);
-          }}
-          onContentInsetChange={(insets) => {
-            m.bottomInset = insets.bottom;
-            refreshAtEnd();
-          }}
+          onScroll={handleListScroll}
+          onLayout={handleListLayout}
+          onContentSizeChange={handleListContentSize}
+          onContentInsetChange={handleContentInsetChange}
         />
       );
     },
-    [bottom],
+    [bottom, handleListScroll, handleListLayout, handleListContentSize, handleContentInsetChange],
   );
 
   // Left disc: pop back to Rooms, or — on a cold start straight into a room

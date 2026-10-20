@@ -1,0 +1,52 @@
+diff --git a/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/index.tsx b/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/index.tsx
+index 554b38c..8fe1699 100644
+--- a/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/index.tsx
++++ b/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/index.tsx
+@@ -2,6 +2,8 @@ import React, { forwardRef, useCallback, useMemo } from "react";
+ import { StyleSheet } from "react-native";
+ import {
+   makeMutable,
++  scrollTo,
++  useAnimatedReaction,
+   useAnimatedRef,
+   useAnimatedStyle,
+   useDerivedValue,
+@@ -150,6 +152,29 @@ const KeyboardChatScrollView: React.ForwardRefExoticComponent<
+       [commitStyle],
+     );
+ 
++    // chat-crdt patch: apply the iOS keyboard lift with an imperative scrollTo
++    // instead of an animated `contentOffset` prop. Reanimated writes that prop
++    // straight to the native view; the next React commit of the ScrollView
++    // (e.g. FlashList re-rendering while scrolling) carries React's default
++    // `{0,0}` and the Fabric ScrollView applies the diff, throwing the list to
++    // the top. `contentOffsetY` is only defined on iOS.
++    useAnimatedReaction(
++      () => contentOffsetY?.value,
++      (current, previous) => {
++        if (current === undefined || previous === null || previous === undefined) {
++          return;
++        }
++        if (current !== previous) {
++          // Next frame, so the contentInset commit lands first; otherwise
++          // UIScrollView clamps to the old range.
++          requestAnimationFrame(() => {
++            scrollTo(scrollViewRef, 0, current, false);
++          });
++        }
++      },
++      [],
++    );
++
+     return (
+       <>
+         <ScrollViewWithBottomPadding
+@@ -159,7 +184,7 @@ const KeyboardChatScrollView: React.ForwardRefExoticComponent<
+             applyWorkaroundForContentInsetHitTestBug
+           }
+           bottomPadding={totalPadding}
+-          contentOffsetY={contentOffsetY}
++          contentOffsetY={undefined}
+           inverted={inverted}
+           scrollIndicatorPadding={indicatorPadding}
+           ScrollViewComponent={ScrollViewComponent}

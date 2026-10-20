@@ -117,12 +117,13 @@ export const Composer = memo(function Composer({
           value={draft}
           onChangeText={handleChange}
           onFocusChange={setFocused}
-          onSubmitEditing={handleSend}
+          // Multiline: Return inserts a newline, only the Send button sends.
+          // No onSubmitEditing / returnKeyType: a submit label or onSubmit makes
+          // SwiftUI treat Return as submit (resigning focus) instead of a newline.
           placeholder="Message…"
           placeholderColor={chat.placeholder}
           color={chat.textPrimary}
           accentColor={chat.accent}
-          returnKeyType="send"
           multiline
           maxLines={6}
           grow

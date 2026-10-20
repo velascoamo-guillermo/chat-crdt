@@ -51,7 +51,7 @@ index 554b38c..8fe1699 100644
            scrollIndicatorPadding={indicatorPadding}
            ScrollViewComponent={ScrollViewComponent}
 diff --git a/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/index.ios.ts b/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/index.ios.ts
-index 129a74b..b451424 100644
+index 129a74b..985eb33 100644
 --- a/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/index.ios.ts
 +++ b/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/index.ios.ts
 @@ -1,4 +1,4 @@
@@ -64,21 +64,44 @@ index 129a74b..b451424 100644
    isScrollAtEnd,
    shouldShiftContent,
  } from "./helpers";
-+import { getMissedLift, getUnwoundScroll } from "./unwind";
++import { getClampFloor, getMissedLift, getUnwoundScroll } from "./unwind";
  
  import type { UseChatKeyboardOptions, UseChatKeyboardReturn } from "./types";
  import type { AnimatedRef } from "react-native-reanimated";
-@@ -51,6 +52,9 @@ function useChatKeyboard(
+@@ -51,11 +52,20 @@ function useChatKeyboard(
    const targetKeyboardHeight = useSharedValue(0);
    const prevAbsorption = useSharedValue(0);
    const isInteractiveDismissal = useSharedValue(false);
 +  // chat-crdt patch: the offset the last shift commanded, until its
-+  // transition ends; `scroll` lags it by a frame (see unwind.ts).
++  // transition ends; `scroll` lags it by a frame (see unwind.ts). With it, the
++  // scroll limit before that shift's inset lands, whether it was a show, and
++  // the user-drag count when it started.
 +  const pendingOffset = useSharedValue<number | null>(null);
++  const clampFloor = useSharedValue(0);
++  const liftOpening = useSharedValue(false);
++  const dragsAtStart = useSharedValue(0);
  
    const {
      layout,
-@@ -197,9 +201,12 @@ function useChatKeyboard(
+     size,
+     offset: scroll,
++    drags,
+     onLayout,
+     onContentSizeChange,
+   } = useScrollState(scrollViewRef);
+@@ -65,6 +75,11 @@ function useChatKeyboard(
+       onStart: (e) => {
+         "worklet";
+ 
++        // Only the shift path below re-arms it; every other path leaves no
++        // lift for onEnd to re-apply.
++        const prevPending = pendingOffset.value;
++        pendingOffset.value = null;
++
+         if (freeze.value) {
+           return;
+         }
+@@ -197,9 +212,13 @@ function useChatKeyboard(
            padding.value,
            prevAbsorption.value,
          );
@@ -87,44 +110,69 @@ index 129a74b..b451424 100644
 -          : scroll.value - prevScrollEffective;
 +        const relativeScroll = getUnwoundScroll({
 +          scroll: scroll.value,
-+          pendingOffset: pendingOffset.value,
++          pendingOffset: prevPending,
 +          prevScrollEffective,
 +          inverted,
 +        });
++        const prevPadding = padding.value;
  
          padding.value = effective;
          prevAbsorption.value = minimumPaddingAbsorbed;
-@@ -232,6 +239,7 @@ function useChatKeyboard(
+@@ -232,6 +251,15 @@ function useChatKeyboard(
            inverted,
            actualTotalPadding,
          );
 +        pendingOffset.value = contentOffsetY.value;
++        clampFloor.value = getClampFloor({
++          contentHeight: size.value.height,
++          layoutHeight: layout.value.height,
++          inset: Math.max(blankSpace.value, prevPadding + extraContentPadding.value),
++          inverted,
++        });
++        liftOpening.value = effective > prevPadding;
++        dragsAtStart.value = drags.value;
        },
        onInteractive: () => {
          "worklet";
-@@ -245,6 +253,16 @@ function useChatKeyboard(
+@@ -245,6 +273,9 @@ function useChatKeyboard(
        },
        onEnd: (e) => {
          "worklet";
-+        const missed = getMissedLift({
-+          scroll: scroll.value,
-+          pendingOffset: pendingOffset.value,
-+          inverted,
-+        });
++        const pending = pendingOffset.value;
 +
-+        if (missed !== null) {
-+          scrollTo(scrollViewRef, 0, missed, false);
-+        }
 +        pendingOffset.value = null;
  
          if (freeze.value) {
            return;
+@@ -257,6 +288,22 @@ function useChatKeyboard(
+         );
+ 
+         padding.value = effective;
++
++        const missed = getMissedLift({
++          scroll: scroll.value,
++          pendingOffset: pending,
++          clampFloor: clampFloor.value,
++          opening: liftOpening.value,
++          userDragged: drags.value !== dragsAtStart.value,
++          inverted,
++        });
++
++        if (missed !== null) {
++          // Next frame, after the padding above has been committed as inset.
++          requestAnimationFrame(() => {
++            scrollTo(scrollViewRef, 0, missed, false);
++          });
++        }
+       },
+     },
+     [inverted, keyboardLiftBehavior, offset, extraContentPadding],
 diff --git a/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/unwind.ts b/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/unwind.ts
 new file mode 100644
-index 0000000..eedde53
+index 0000000..377eb68
 --- /dev/null
 +++ b/node_modules/react-native-keyboard-controller/src/components/KeyboardChatScrollView/useChatKeyboard/unwind.ts
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,85 @@
 +// chat-crdt patch: no RN imports, so the app's bun tests can cover it.
 +
 +/**
@@ -153,25 +201,56 @@ index 0000000..eedde53
 +};
 +
 +/**
-+ * The commanded lift offset if the scroll view stopped short of it, else null.
-+ * A shift applied before its own contentInset commit gets clamped to the
-+ * previous (smaller) inset's range; by the transition's end the inset has
-+ * landed and the offset can be re-applied. A clamp only ever falls short, so
-+ * a scroll past the target (e.g. the app scrolling to the end as the composer
-+ * grows) is left alone.
++ * Furthest offset the scroll view allows while `inset` is still the applied
++ * content inset: where a lift scrolled before its own inset commit stops.
++ */
++export const getClampFloor = ({
++  contentHeight,
++  layoutHeight,
++  inset,
++  inverted,
++}: {
++  contentHeight: number;
++  layoutHeight: number;
++  inset: number;
++  inverted: boolean;
++}): number => {
++  "worklet";
++
++  return inverted ? -inset : Math.max(contentHeight - layoutHeight + inset, 0);
++};
++
++/**
++ * The commanded lift offset if the scroll view clamped it, else null.
++ * A keyboard-show shift applied before its own contentInset commit stops at
++ * the previous inset's limit (`clampFloor`); by the transition's end the inset
++ * has landed and the offset can be re-applied. Anything else that left the
++ * scroll short is the reader's or the app's doing and is left alone: a drag
++ * during the transition, a scroll that doesn't rest at the floor, a scroll
++ * past the target (the composer's own end-scroll), or a hide (a shrinking
++ * inset can't clamp it short).
 + */
 +export const getMissedLift = ({
 +  scroll,
 +  pendingOffset,
++  clampFloor,
++  opening,
++  userDragged,
 +  inverted,
 +}: {
 +  scroll: number;
 +  pendingOffset: number | null;
++  clampFloor: number;
++  opening: boolean;
++  userDragged: boolean;
 +  inverted: boolean;
 +}): number | null => {
 +  "worklet";
 +
-+  if (pendingOffset === null) {
++  if (pendingOffset === null || !opening || userDragged) {
++    return null;
++  }
++  if (Math.abs(scroll - clampFloor) >= 1) {
 +    return null;
 +  }
 +
@@ -179,3 +258,43 @@ index 0000000..eedde53
 +
 +  return shortBy >= 1 ? pendingOffset : null;
 +};
+diff --git a/node_modules/react-native-keyboard-controller/src/components/hooks/useScrollState.ts b/node_modules/react-native-keyboard-controller/src/components/hooks/useScrollState.ts
+index 74486ac..1b3055d 100644
+--- a/node_modules/react-native-keyboard-controller/src/components/hooks/useScrollState.ts
++++ b/node_modules/react-native-keyboard-controller/src/components/hooks/useScrollState.ts
+@@ -16,6 +16,7 @@ const NATIVE_SCROLL_EVENT_NAMES = [
+ ];
+ 
+ type ScrollEvent = {
++  eventName: string;
+   contentOffset: {
+     x: number;
+     y: number;
+@@ -34,12 +35,18 @@ const useScrollState = (ref: AnimatedRef<Reanimated.ScrollView>) => {
+   const offset = useSharedValue(0);
+   const layout = useSharedValue({ width: 0, height: 0 });
+   const size = useSharedValue({ width: 0, height: 0 });
++  // chat-crdt patch: user drags started so far, so a keyboard transition can
++  // tell the reader's scroll from its own.
++  const drags = useSharedValue(0);
+ 
+   const register = useEventHandlerRegistration(ref);
+ 
+   const eventHandler = useEvent((event: ScrollEvent) => {
+     "worklet";
+ 
++    if (event.eventName.endsWith("onScrollBeginDrag")) {
++      drags.value += 1;
++    }
+     // eslint-disable-next-line react-compiler/react-compiler
+     offset.value = event.contentOffset.y;
+     layout.value = event.layoutMeasurement;
+@@ -75,7 +82,7 @@ const useScrollState = (ref: AnimatedRef<Reanimated.ScrollView>) => {
+     [size],
+   );
+ 
+-  return { offset, layout, size, onLayout, onContentSizeChange };
++  return { offset, layout, size, drags, onLayout, onContentSizeChange };
+ };
+ 
+ export default useScrollState;

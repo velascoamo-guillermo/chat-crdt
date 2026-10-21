@@ -12,12 +12,30 @@ Maestro runs belong on the dedicated headless e2e devices, never on a simulator
 or emulator you use by hand:
 
 - iOS: "E2E iPhone 17", booted with `xcrun simctl boot <udid>` (no Simulator window).
-- Android: AVD `E2E_Pixel9_36`, started with `emulator -avd E2E_Pixel9_36 -no-window`.
+- Android: AVD `E2E_Pixel9_36`, started with
+  `emulator -avd E2E_Pixel9_36 -no-window -no-audio -no-boot-anim -port 5560 -no-snapshot -gpu swiftshader_indirect`.
+  Give the AVD 4 GB (`hw.ramSize=4096` in its `config.ini`). With the 2 GB
+  default its adb connection dropped to `offline` under load (Maestro's
+  clearState, pulling the APK), which failed runs at random.
 
-They have no logged-in app of their own. Any other running, logged-in chatcrdt
-joins #general on launch and pushes its old doc back into the room `run.sh` just
-reset, so close the app on every other device before a run. `build-e2e.sh ios`
-installs with `simctl` and never opens Simulator.app.
+`build-e2e.sh ios` installs with `simctl` and never opens Simulator.app.
+
+## Each run has its own room
+
+`run.sh` creates `e2e-<RUN_ID>` (`scripts/e2e-room.ts`: provisions maestro-a and
+maestro-b, a creates the room, b joins), and the flows open it through the
+`chatcrdt://<room>` deep link. Client B writes to the same room. Other devices can
+stay logged in and open: they auto-join #general, never this room, so they can't
+pollute the run. `scripts/server-ctl.sh prune-e2e-rooms` keeps the newest 5 `e2e-*`
+rooms (`E2E_ROOMS_KEEP` to change).
+
+`run.sh` restarts apps/server at the start: the `/auth` endpoints allow 5 requests
+per minute per IP, and a run makes 4 (two in `e2e-room.ts`, the app's login, client
+B's login).
+
+Sends go through `subflows/send.yaml`: it waits for the typed text to be in the
+composer before tapping Send, then checks the room's message count went up (the
+bubble alone can't tell a send from text still sitting in the field).
 
 ## Build once per native or JS change
 

@@ -114,8 +114,8 @@ async function main(): Promise<void> {
   const standIn = `E2E1${JSON.stringify({
     v: 1,
     keyId: epoch,
-    nonce: randomBytes(24).toString("base64"),
-    ciphertext: randomBytes(32).toString("base64"),
+    nonce: randomBytes(24).toString("base64url"),
+    ciphertext: randomBytes(32).toString("base64url"),
   })}`;
   const retracted: string[] = [];
   const forger = new SyncEngine({ roomId: ROOM!, userId: auth.user.id, username: auth.user.username });

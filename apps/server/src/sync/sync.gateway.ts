@@ -21,7 +21,7 @@ import { RoomKeysService } from '../rooms/room-keys.service';
 import { RoomState } from './room-state';
 import { checkEnvelopedUpdate } from './e2ee-update-gate';
 import { MetricsService } from '../metrics/metrics.service';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { WsMsgType } from '@chat-crdt/shared';
 
 const MSG_SYNC = 0;
@@ -58,6 +58,15 @@ interface EpochPayload {
   keyId: number;
 }
 
+interface RejectionState {
+  signature: string;
+  repeats: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const REJECT_RESYNC_BASE_MS = 1_000;
+const REJECT_RESYNC_MAX_MS = 30_000;
+
 interface RateState {
   count: number;
   windowStart: number;
@@ -76,6 +85,10 @@ export class SyncGateway
   private readonly clientRoom = new WeakMap<WebSocket, string>();
   private readonly persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly clientRate = new WeakMap<WebSocket, RateState>();
+  // T10: last refused update per client, so an identical re-send (a client
+  // that can't repair its state) gets the step1 re-ask on backoff instead of
+  // a tight reject/resync loop.
+  private readonly lastRejection = new WeakMap<WebSocket, RejectionState>();
   // Awareness clientIDs announced by each socket, so we can clear them on disconnect.
   private readonly awarenessIds = new WeakMap<WebSocket, Set<number>>();
   // Liveness flag per socket: true on connect + on every pong. A sweep that
@@ -339,10 +352,7 @@ export class SyncGateway
           // the deleted items as content-less structs and everything else
           // lands, instead of the same step2 bouncing on every reconnect.
           client.send(encodeE2eeRejected(room.currentKeyId, rejected.rejectedMessageIds));
-          const step1 = encoding.createEncoder();
-          encoding.writeVarUint(step1, MSG_SYNC);
-          syncProtocol.writeSyncStep1(step1, room.doc);
-          client.send(encoding.toUint8Array(step1));
+          this.askForResync(client, room, data);
           return;
         }
         const encoder = encoding.createEncoder();
@@ -365,6 +375,37 @@ export class SyncGateway
     } catch (err: any) {
       this.logger.error(`Error handling message: ${err.message}`);
     }
+  }
+
+  /**
+   * T10: after a rejection, ask the client for its state again (sync step1).
+   * The same refused frame arriving again means the client couldn't repair
+   * it; re-asking at once would just loop, so repeats wait 1s, 2s, 4s… (max
+   * 30s), and only the latest pending re-ask fires.
+   */
+  private askForResync(client: WebSocket, room: RoomState, refused: Buffer): void {
+    const signature = createHash('sha256').update(refused).digest('hex');
+    const previous = this.lastRejection.get(client);
+    if (previous?.timer) clearTimeout(previous.timer);
+    const repeats = previous?.signature === signature ? previous.repeats + 1 : 0;
+    const state: RejectionState = { signature, repeats, timer: null };
+    this.lastRejection.set(client, state);
+
+    const sendStep1 = () => {
+      state.timer = null;
+      if (client.readyState !== WebSocket.OPEN) return;
+      const step1 = encoding.createEncoder();
+      encoding.writeVarUint(step1, MSG_SYNC);
+      syncProtocol.writeSyncStep1(step1, room.doc);
+      client.send(encoding.toUint8Array(step1));
+    };
+    if (repeats === 0) {
+      sendStep1();
+      return;
+    }
+    const delay = Math.min(REJECT_RESYNC_BASE_MS * 2 ** (repeats - 1), REJECT_RESYNC_MAX_MS);
+    state.timer = setTimeout(sendStep1, delay);
+    state.timer.unref?.();
   }
 
   /**

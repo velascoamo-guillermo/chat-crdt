@@ -1,7 +1,11 @@
 import * as Y from 'yjs';
 import { checkEnvelopedUpdate } from './e2ee-update-gate';
 
-const ENVELOPE = 'E2E1{"v":1,"keyId":1,"nonce":"bm9uY2U=","ciphertext":"Y2lwaGVy"}';
+// Shape of what the app sends: libsodium URLSAFE_NO_PADDING, 24-byte nonce
+// (32 chars), ciphertext = plaintext + 16-byte tag.
+const NONCE = 'q-9_zXk0aB2cD3eF4gH5iJ6kL7mN8oP9';
+const CIPHERTEXT = 'Zm9v-YmFy_YmF6LXF1eC1xdXV4LWNvcmdl';
+const ENVELOPE = `E2E1{"v":1,"keyId":1,"nonce":"${NONCE}","ciphertext":"${CIPHERTEXT}"}`;
 
 function msg(id: string, content: string) {
   return { id, roomId: 'team-a', userId: 'u1', username: 'alice', content, createdAt: 1 };
@@ -31,8 +35,7 @@ describe('checkEnvelopedUpdate (T10: no plaintext message inserts into an E2EE r
 
   it('accepts the envelope the app really sends: libsodium URL-safe, unpadded base64', () => {
     // sodium.to_base64 defaults to URLSAFE_NO_PADDING ('-', '_', no '=').
-    const real =
-      'E2E1{"v":1,"keyId":1,"nonce":"q-9_zXk0aB2cD3eF4gH5iJ6kL7mN8oP9","ciphertext":"Zm9v-YmFy_YmF6LXF1eA"}';
+    const real = ENVELOPE;
     const doc = new Y.Doc();
     const update = updateOf(doc, (d) => d.getArray('messages').push([msg('m1', real)]));
     expect(isOk(update)).toBe(true);
@@ -106,12 +109,26 @@ describe('checkEnvelopedUpdate (T10: no plaintext message inserts into an E2EE r
       ['fractional keyId', 'E2E1{"v":1,"keyId":1.5,"nonce":"bg==","ciphertext":"Yw=="}'],
       ['missing nonce', 'E2E1{"v":1,"keyId":1,"ciphertext":"Yw=="}'],
       ['empty ciphertext', 'E2E1{"v":1,"keyId":1,"nonce":"bg==","ciphertext":""}'],
-      ['non-base64 ciphertext', 'E2E1{"v":1,"keyId":1,"nonce":"bg==","ciphertext":"hello world"}'],
+      ['non-base64 ciphertext', `E2E1{"v":1,"keyId":1,"nonce":"${NONCE}","ciphertext":"hello world"}`],
+      ['standard-alphabet base64 (the app never emits it)', `E2E1{"v":1,"keyId":1,"nonce":"${NONCE}","ciphertext":"Zm9v+YmFy/YmF6LXF1eC1xdXV4"}`],
+      ['padded base64', `E2E1{"v":1,"keyId":1,"nonce":"${NONCE}","ciphertext":"Zm9vYmFyYmF6cXV4Y29yZ2U="}`],
+      ['short nonce', `E2E1{"v":1,"keyId":1,"nonce":"bm9uY2U","ciphertext":"${CIPHERTEXT}"}`],
+      ['readable short "ciphertext"', `E2E1{"v":1,"keyId":1,"nonce":"${NONCE}","ciphertext":"meet_at_the_bank"}`],
+      ['oversized ciphertext', `E2E1{"v":1,"keyId":1,"nonce":"${NONCE}","ciphertext":"${'A'.repeat(22000)}"}`],
+      ['extra envelope key', `E2E1{"v":1,"keyId":1,"nonce":"${NONCE}","ciphertext":"${CIPHERTEXT}","plain":"hi"}`],
     ])('rejects %s', (_label, content) => {
       const doc = new Y.Doc();
       const update = updateOf(doc, (d) => d.getArray('messages').push([msg('m1', content)]));
       expect(isOk(update)).toBe(false);
     });
+  });
+
+  it('rejects a message object carrying extra fields beside the envelope', () => {
+    const doc = new Y.Doc();
+    const update = updateOf(doc, (d) =>
+      d.getArray('messages').push([{ ...msg('m1', ENVELOPE), note: 'readable side channel' }]),
+    );
+    expect(isOk(update)).toBe(false);
   });
 
   describe('rejected message ids (client recovery)', () => {

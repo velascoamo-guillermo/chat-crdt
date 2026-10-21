@@ -451,7 +451,8 @@ describe('SyncGateway', () => {
   });
 
   describe('E2EE plaintext gate (T10)', () => {
-    const ENVELOPE = 'E2E1{"v":1,"keyId":1,"nonce":"bm9uY2U=","ciphertext":"Y2lwaGVy"}';
+    const ENVELOPE =
+      'E2E1{"v":1,"keyId":1,"nonce":"q-9_zXk0aB2cD3eF4gH5iJ6kL7mN8oP9","ciphertext":"Zm9v-YmFy_YmF6LXF1eC1xdXV4LWNvcmdl"}';
     const SECRET = 'plaintext that must not leak';
 
     function msg(id: string, content: string) {
@@ -795,6 +796,68 @@ describe('SyncGateway', () => {
         listener('db-a', 2);
 
         expect(framesOfType(inRoom, ROOM_EPOCH)).toHaveLength(0);
+      });
+
+      describe('repeated identical rejection (loop guard)', () => {
+        afterEach(() => jest.useRealTimers());
+
+        function rejectSame(room: RoomState, sender: FakeSocket, frame: Buffer) {
+          (gateway as any).handleMessage(sender, room, frame);
+        }
+        const step1Count = (socket: FakeSocket) =>
+          socket.sent.filter((bytes) => {
+            const d = decoding.createDecoder(new Uint8Array(bytes));
+            return decoding.readVarUint(d) === 0 && decoding.readVarUint(d) === 0;
+          }).length;
+
+        it('answers a first rejection with an immediate step1, then backs off for the same update', () => {
+          jest.useFakeTimers();
+          const room = seedRoom('team-a', 1);
+          const sender = new FakeSocket();
+          room.clients.add(sender as any);
+          jest.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+          const frame = updateFrame((d) => d.getArray('messages').push([msg('m1', SECRET)]));
+
+          rejectSame(room, sender, frame);
+          expect(step1Count(sender)).toBe(1);
+
+          rejectSame(room, sender, frame);
+          rejectSame(room, sender, frame);
+          expect(step1Count(sender)).toBe(1); // no immediate re-ask
+
+          jest.advanceTimersByTime(30_000);
+          expect(step1Count(sender)).toBe(2); // one delayed re-ask, not one per rejection
+          expect(framesOfType(sender, E2EE_REJECTED)).toHaveLength(3);
+        });
+
+        it('a different refused update is answered right away', () => {
+          jest.useFakeTimers();
+          const room = seedRoom('team-a', 1);
+          const sender = new FakeSocket();
+          room.clients.add(sender as any);
+          jest.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+
+          rejectSame(room, sender, updateFrame((d) => d.getArray('messages').push([msg('m1', SECRET)])));
+          rejectSame(room, sender, updateFrame((d) => d.getArray('messages').push([msg('m2', 'other')])));
+
+          expect(step1Count(sender)).toBe(2);
+        });
+
+        it('never re-asks a client that has gone away', () => {
+          jest.useFakeTimers();
+          const room = seedRoom('team-a', 1);
+          const sender = new FakeSocket();
+          room.clients.add(sender as any);
+          jest.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+          const frame = updateFrame((d) => d.getArray('messages').push([msg('m1', SECRET)]));
+          rejectSame(room, sender, frame);
+          rejectSame(room, sender, frame);
+
+          sender.readyState = 3; // CLOSED
+          jest.advanceTimersByTime(30_000);
+
+          expect(step1Count(sender)).toBe(1);
+        });
       });
 
       it('survives a failed epoch publish to Redis', async () => {

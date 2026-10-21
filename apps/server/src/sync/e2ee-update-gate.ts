@@ -4,13 +4,25 @@ import * as Y from 'yjs';
  * ADR-010 wire format: an encrypted message's `content` is
  * 'E2E1' + JSON.stringify({ v: 1, keyId, nonce, ciphertext }) (see
  * apps/mobile/src/crypto/e2eeEnvelope.ts). The server never decrypts it, but
- * it does check the envelope's shape: a bare prefix would let a stale client's
- * "E2E1 …" prose (or a malicious one's) through as if it were ciphertext.
+ * it does check the envelope's exact shape: a bare prefix would let a stale
+ * client's "E2E1 …" prose through as if it were ciphertext, and extra keys
+ * or readable short "ciphertext" would be side channels. A malicious client
+ * can still encode text as valid-looking base64url — format checks can't
+ * stop that; the client gate is the primary defense.
  */
 const E2EE_PREFIX = 'E2E1';
-// Standard or URL-safe alphabet, padding optional: the app's libsodium
-// to_base64 defaults to URLSAFE_NO_PADDING.
-const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/;
+// The app's react-native-libsodium emits nonce and ciphertext as
+// URLSAFE_NO_PADDING base64 (its 'base64' output format and to_base64 default).
+const BASE64URL = /^[A-Za-z0-9_-]+$/;
+// XChaCha20-Poly1305: 24-byte nonce -> 32 chars.
+const NONCE_CHARS = 32;
+// Ciphertext = plaintext + 16-byte tag. Plaintext is 1..MAX_MESSAGE_LENGTH
+// (4000) UTF-16 chars, <= 16000 UTF-8 bytes: 17..16016 bytes -> 23..21355 chars.
+const MIN_CIPHERTEXT_CHARS = 23;
+const MAX_CIPHERTEXT_CHARS = 21_355;
+const ENVELOPE_KEYS = ['ciphertext', 'keyId', 'nonce', 'v'];
+// MessageDto (packages/shared): nothing readable may ride beside `content`.
+const MESSAGE_KEYS = ['content', 'createdAt', 'id', 'roomId', 'userId', 'username'];
 
 export type EnvelopeGateResult =
   | { ok: true }
@@ -61,10 +73,26 @@ export function checkEnvelopedUpdate(update: Uint8Array): EnvelopeGateResult {
   return ok ? { ok: true } : { ok: false, rejectedMessageIds };
 }
 
+function hasExactKeys(value: object, keys: readonly string[]): boolean {
+  const own = Object.keys(value).sort();
+  return own.length === keys.length && own.every((k, i) => k === keys[i]);
+}
+
 function isEnvelopedMessage(value: unknown): boolean {
-  if (typeof value !== 'object' || value === null) return false;
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  if (!hasExactKeys(value, MESSAGE_KEYS)) return false;
   const content = (value as { content?: unknown }).content;
   return typeof content === 'string' && isWellFormedEnvelope(content);
+}
+
+function isBase64Url(value: unknown, minChars: number, maxChars: number): boolean {
+  return (
+    typeof value === 'string' &&
+    value.length >= minChars &&
+    value.length <= maxChars &&
+    value.length % 4 !== 1 && // impossible length for unpadded base64
+    BASE64URL.test(value)
+  );
 }
 
 function isWellFormedEnvelope(content: string): boolean {
@@ -75,16 +103,15 @@ function isWellFormedEnvelope(content: string): boolean {
   } catch {
     return false;
   }
-  if (typeof envelope !== 'object' || envelope === null) return false;
+  if (typeof envelope !== 'object' || envelope === null || Array.isArray(envelope)) return false;
+  if (!hasExactKeys(envelope, ENVELOPE_KEYS)) return false;
   const { v, keyId, nonce, ciphertext } = envelope as Record<string, unknown>;
   return (
     v === 1 &&
     typeof keyId === 'number' &&
     Number.isInteger(keyId) &&
     keyId > 0 &&
-    typeof nonce === 'string' &&
-    BASE64.test(nonce) &&
-    typeof ciphertext === 'string' &&
-    BASE64.test(ciphertext)
+    isBase64Url(nonce, NONCE_CHARS, NONCE_CHARS) &&
+    isBase64Url(ciphertext, MIN_CIPHERTEXT_CHARS, MAX_CIPHERTEXT_CHARS)
   );
 }

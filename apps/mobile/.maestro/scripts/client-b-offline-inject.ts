@@ -70,7 +70,10 @@ const RUN_ID = process.env.RUN_ID;
 const CONNECT_TIMEOUT_MS = 15_000;
 // Upper bound while polling for A's messages to arrive post-handshake — normally
 // settles in well under a second locally; generous for a loaded CI/dev machine.
-const SETTLE_TIMEOUT_MS = 8_000;
+// Device A only uploads its offline messages once it reconnects after part 2's
+// server restart, on WebSocketProvider's backoff (capped at 30s between tries).
+// The wait returns as soon as A's messages arrive, so a long cap costs nothing.
+const SETTLE_TIMEOUT_MS = 45_000;
 const SETTLE_POLL_MS = 150;
 
 if (!ROOM_ID) {

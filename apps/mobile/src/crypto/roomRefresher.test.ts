@@ -22,7 +22,7 @@ function harness() {
   const timers: { fn: () => void; ms: number; cleared: boolean }[] = [];
   const applied: Room[][] = [];
   const everE2ee: string[] = [];
-  let socketUp = false;
+  let socket: 'connected' | 'connecting' | 'disconnected' | undefined = 'disconnected';
   let sticky = false;
 
   const deps: RoomRefresherDeps<Room> = {
@@ -31,7 +31,7 @@ function harness() {
       fetches.push(d);
       return d.promise;
     },
-    isSocketConnected: () => socketUp,
+    socketState: () => socket,
     wasEverE2ee: async () => sticky,
     onEverE2ee: (room) => everE2ee.push(room),
     onRooms: (rooms) => applied.push(rooms),
@@ -58,7 +58,7 @@ function harness() {
     everE2ee,
     lastState,
     flush,
-    setSocketUp: (v: boolean) => (socketUp = v),
+    setSocket: (v: typeof socket) => (socket = v),
     setSticky: (v: boolean) => (sticky = v),
   };
 }
@@ -120,13 +120,25 @@ describe('createRoomRefresher (T10: authoritative per-room E2EE refresh)', () =>
     });
 
     it('network error while the sync socket is up -> error (a blip, not offline)', async () => {
-      h.setSocketUp(true);
+      h.setSocket('connected');
       expect(await refreshWith({ kind: 'network-error' })).toEqual({ status: 'error' });
     });
 
     it('network error with the sync socket down -> offline', async () => {
-      h.setSocketUp(false);
+      h.setSocket('disconnected');
       expect(await refreshWith({ kind: 'network-error' })).toEqual({ status: 'offline' });
+    });
+
+    // Review fix 1 minor: at room entry the socket is not up YET; a thrown
+    // fetch then (DNS/TLS/API host down) must not unlock plaintext.
+    it('network error while the socket is still connecting -> error', async () => {
+      h.setSocket('connecting');
+      expect(await refreshWith({ kind: 'network-error' })).toEqual({ status: 'error' });
+    });
+
+    it('network error before the socket exists -> error', async () => {
+      h.setSocket(undefined);
+      expect(await refreshWith({ kind: 'network-error' })).toEqual({ status: 'error' });
     });
 
     it('fetchRooms throwing with the socket down -> offline', async () => {

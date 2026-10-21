@@ -20,8 +20,8 @@ export type RoomsFetchResult<R extends RoomSummaryLike> =
 
 export interface RoomRefresherDeps<R extends RoomSummaryLike> {
   fetchRooms(): Promise<RoomsFetchResult<R>>;
-  /** Whether the room's sync socket is up right now (rules out "offline"). */
-  isSocketConnected(room: string): boolean;
+  /** The room's sync socket status; undefined = no socket yet. */
+  socketState(room: string): 'connected' | 'connecting' | 'disconnected' | undefined;
   wasEverE2ee(room: string): Promise<boolean>;
   /** The persisted ever-E2EE flag reads true for this room. */
   onEverE2ee(room: string): void;
@@ -63,15 +63,17 @@ export function createRoomRefresher<R extends RoomSummaryLike>(deps: RoomRefresh
     return entry;
   };
 
-  // Only "no response AND no socket" counts as offline (review I2). An HTTP
-  // error, a blip while the socket is up, or the room missing from the list
-  // says nothing about the room's E2EE state.
+  // Only "no response AND the socket has failed too" counts as offline
+  // (review I2). An HTTP error, a blip while the socket is up, the room
+  // missing from the list, or a socket not tried/settled yet (room entry) says
+  // nothing about the room's E2EE state — the retry classifies again once the
+  // socket has actually failed.
   const classify = (room: string, result: RoomsFetchResult<R>): RoomRefreshState => {
     if (result.kind === 'ok') {
       const summary = result.rooms.find((r) => r.name === room);
       return summary ? { status: 'ok', currentKeyId: summary.currentKeyId } : { status: 'error' };
     }
-    if (result.kind === 'network-error' && !deps.isSocketConnected(room)) return { status: 'offline' };
+    if (result.kind === 'network-error' && deps.socketState(room) === 'disconnected') return { status: 'offline' };
     return { status: 'error' };
   };
 

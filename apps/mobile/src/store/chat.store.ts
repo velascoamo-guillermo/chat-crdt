@@ -52,13 +52,21 @@ interface ChatState {
   setRoomCipher: (roomId: string, cipher: LibsodiumContentCipher) => void;
   setPendingEpochsForMe: (roomId: string, epochs: Set<number>) => void;
   bumpRoomCrypto: (roomId: string) => void;
-  noteE2eeRejection: (roomId: string, text: string) => void;
+  noteE2eeRejection: (roomId: string, text: string, kind?: E2eeRejection['kind']) => void;
   clearE2eeRejection: (roomId: string) => void;
+  /** Logout: the next account on the device must not inherit refused text. */
+  clearAllE2eeRejections: () => void;
 }
 
 export interface E2eeRejection {
   text: string;
   seq: number;
+  /**
+   * 'restored': our refused text, back in the composer. 'resynced': the
+   * room's local copy couldn't be repaired and was reloaded from the server
+   * (our own encrypted messages were put back).
+   */
+  kind: 'restored' | 'resynced';
 }
 
 let e2eeRejectionSeq = 0;
@@ -115,12 +123,13 @@ export const useChatStore = create<ChatState>((set) => ({
         roomCryptoByRoom: { ...s.roomCryptoByRoom, [roomId]: { ...existing, version: existing.version + 1 } },
       };
     }),
-  noteE2eeRejection: (roomId, text) =>
+  noteE2eeRejection: (roomId, text, kind = 'restored') =>
     // Each rejection carries only its own text; the composer appends it to
     // whatever draft is already there, so nothing typed is lost.
     set((s) => ({
-      e2eeRejectionByRoom: { ...s.e2eeRejectionByRoom, [roomId]: { text, seq: ++e2eeRejectionSeq } },
+      e2eeRejectionByRoom: { ...s.e2eeRejectionByRoom, [roomId]: { text, kind, seq: ++e2eeRejectionSeq } },
     })),
+  clearAllE2eeRejections: () => set({ e2eeRejectionByRoom: {} }),
   clearE2eeRejection: (roomId) =>
     set((s) => {
       const { [roomId]: _rejection, ...e2eeRejectionByRoom } = s.e2eeRejectionByRoom;

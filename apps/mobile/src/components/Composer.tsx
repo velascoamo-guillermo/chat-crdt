@@ -10,6 +10,7 @@ import {
   useUITheme,
 } from "../ui";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
+import { draftAfterRestore } from "../utils/draftRestore";
 
 interface Props {
   onSend: (content: string) => void;
@@ -37,11 +38,10 @@ export const Composer = memo(function Composer({ onSend, sendTyping, disabled = 
   const t = useUITheme();
 
   useEffect(() => {
-    if (!restoreDraft || restoredSeq.current === restoreDraft.seq) return;
-    restoredSeq.current = restoreDraft.seq;
-    if (!restoreDraft.text) return;
-    const current = draft.value.trim();
-    draft.value = current ? `${current}\n${restoreDraft.text}` : restoreDraft.text;
+    const next = draftAfterRestore(draft.value, restoreDraft, restoredSeq.current);
+    if (!next) return;
+    restoredSeq.current = next.seq;
+    if (next.draft !== draft.value) draft.value = next.draft;
   }, [restoreDraft, draft]);
 
   const handleChange = useCallback(

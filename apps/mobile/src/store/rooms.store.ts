@@ -68,7 +68,7 @@ async function requestRooms(): Promise<RoomsFetchResult<RoomSummary>> {
 
 const roomRefresher = createRoomRefresher<RoomSummary>({
   fetchRooms: requestRooms,
-  isSocketConnected: (room) => useChatStore.getState().wsStatusByRoom[room] === 'connected',
+  socketState: (room) => useChatStore.getState().wsStatusByRoom[room],
   wasEverE2ee: (room) => e2eeSticky.wasEverE2ee(room),
   onEverE2ee: (room) =>
     useRoomsStore.setState((s) => ({ everE2eeByRoom: { ...s.everE2eeByRoom, [room]: true } })),

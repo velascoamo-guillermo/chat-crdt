@@ -241,7 +241,9 @@ export default function ChatScreen() {
               testID="e2ee-rejection-notice"
               style={[styles.e2eeBannerError, { color: t.status.offline, textAlign: "center" }]}
             >
-              Message not sent: encryption required. Your text is back in the composer.
+              {e2eeRejection.kind === "resynced"
+                ? "This room couldn't sync and was reloaded from the server. Your encrypted messages were kept."
+                : "Message not sent: encryption required. Your text is back in the composer."}
             </Text>
           ) : null}
           {sendError ? (

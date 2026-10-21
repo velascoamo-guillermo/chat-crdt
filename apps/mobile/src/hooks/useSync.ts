@@ -11,6 +11,8 @@ import { useRoomsStore } from '../store/rooms.store';
 import { useE2eeCipher } from './useE2ee';
 import { E2EE_PREFIX } from '../crypto/e2eeEnvelope';
 import { rejectedDraftText } from '../crypto/rejectedDraft';
+import { shouldAdoptLegacyDoc } from '../crypto/legacyDocPolicy';
+import type { MessageDto } from '@chat-crdt/shared';
 
 const WS_URL = process.env.EXPO_PUBLIC_WS_URL ?? 'ws://localhost:3001/sync';
 
@@ -20,6 +22,11 @@ const WS_URL = process.env.EXPO_PUBLIC_WS_URL ?? 'ws://localhost:3001/sync';
 // logout/backoff handling — a non-member shouldn't be logged out, just told
 // they aren't in this room.
 const NOT_MEMBER_CLOSE_CODE = 4003;
+
+// T10: our own encrypted messages saved across a discard-and-resync of a
+// room doc, keyed `${userId}:${roomId}`. In memory only: an app kill between
+// the discard and the resync loses them (documented trade-off).
+const reinsertStash = new Map<string, MessageDto[]>();
 
 export type MembershipStatus = 'unknown' | 'ok' | 'not-a-member';
 
@@ -43,6 +50,9 @@ export function useSync(roomId: string) {
   // fresh useSync call) per distinct roomId route param, so a fresh 'unknown'
   // is already correct — no need to reset it back inside the effect.
   const [membership, setMembership] = useState<MembershipStatus>('unknown');
+  // T10: bumped to rebuild the engine from a freshly discarded local doc
+  // after a rejection the client can't repair in place.
+  const [docGeneration, setDocGeneration] = useState(0);
 
   const engineRef = useRef<SyncEngine | null>(null);
   const providerRef = useRef<WebSocketProvider | null>(null);
@@ -98,7 +108,14 @@ export function useSync(roomId: string) {
 
     // Use IStorage-compatible wrapper around expo-sqlite
     const storage = createExpoSQLiteStorage(db);
-    const persistence = new SQLitePersistence(engine, storage);
+    // T10: local docs are per account (yjs:<userId>:<room>) — a shared key
+    // let one account's unsynced plaintext be sent by the next. The old
+    // shared doc is adopted only if it holds no other user's plaintext.
+    const persistence = new SQLitePersistence(engine, storage, undefined, {
+      scope: user.id,
+      adoptLegacy: (messages) => shouldAdoptLegacyDoc(messages, user.id),
+    });
+    const stashKey = `${user.id}:${roomId}`;
 
     let provider: WebSocketProvider | null = null;
     let unsubMessages: (() => void) | null = null;
@@ -153,16 +170,41 @@ export function useSync(roomId: string) {
         // and hand our own text back to the composer.
         onE2eeRejected: ({ keyId, retracted }) => {
           useRoomsStore.getState().noteRoomEpoch(roomId, keyId);
+          // Read the cipher now, not at provider creation: it may have
+          // resolved (or gained keys) since.
+          const cipher = useChatStore.getState().roomCryptoByRoom[roomId]?.cipher ?? contentCipher;
           const text = rejectedDraftText(
             retracted,
             user.id,
-            contentCipher ? (content, ad) => contentCipher.decrypt(content, ad) : null,
+            cipher ? (content, ad) => cipher.decrypt(content, ad) : null,
           );
           // Notify even when nothing can be restored (someone else's or
           // undecryptable): the user still has to know it wasn't sent.
           if (retracted.some((m) => m.userId === user.id)) {
             useChatStore.getState().noteE2eeRejection(roomId, text ?? '');
           }
+        },
+        // T10: the server refused something in our state we can't retract
+        // (another account's leftovers, an item with no id). The provider has
+        // stopped pushing state, ending the reject/resync loop. Keep our own
+        // encrypted messages, drop the local doc, rebuild from the server,
+        // then put back those of ours the server never got.
+        onUnrecoverableE2eeRejection: ({ keyId }) => {
+          useRoomsStore.getState().noteRoomEpoch(roomId, keyId);
+          const ours = engine
+            .getMessages()
+            .filter((m) => m.userId === user.id && m.content.startsWith(E2EE_PREFIX));
+          reinsertStash.set(stashKey, [...(reinsertStash.get(stashKey) ?? []), ...ours]);
+          useChatStore.getState().noteE2eeRejection(roomId, '', 'resynced');
+          void persistence.discard().then(() => {
+            if (!cancelled) setDocGeneration((n) => n + 1);
+          });
+        },
+        onSynced: () => {
+          const stash = reinsertStash.get(stashKey);
+          if (!stash) return;
+          reinsertStash.delete(stashKey);
+          engine.reinsertMessages(stash);
         },
         onAuthError: (code) => {
           if (code === NOT_MEMBER_CLOSE_CODE) {
@@ -213,7 +255,7 @@ export function useSync(roomId: string) {
     // — tearing down and rebuilding the engine/provider/persistence with
     // the cipher now wired in (ADR-010: contentCipher is fixed at
     // construction, so there is no "just flip a flag" path).
-  }, [token, user?.id, roomId, contentCipher]);
+  }, [token, user?.id, roomId, contentCipher, docGeneration]);
 
   const sendMessage = (content: string) => {
     engineRef.current?.sendMessage(content);
@@ -242,6 +284,10 @@ function createExpoSQLiteStorage(db: SQLite.SQLiteDatabase) {
         key
       );
       return row?.value ?? null;
+    },
+    async removeItem(key: string): Promise<void> {
+      await initPromise;
+      await db.runAsync('DELETE FROM yjs_kv WHERE key = ?', key);
     },
     async setItem(key: string, value: string): Promise<void> {
       await initPromise;

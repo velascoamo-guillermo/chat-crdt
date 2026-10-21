@@ -73,6 +73,19 @@ export class SyncEngine {
     return retracted;
   }
 
+  /**
+   * T10: appends messages verbatim (same id, createdAt and already-encrypted
+   * content, so their AAD stays valid) unless the doc already holds that id.
+   * Used to put back the user's own encrypted messages after a discarded doc
+   * was resynced from the server. Returns what was inserted.
+   */
+  reinsertMessages(messages: readonly MessageDto[]): MessageDto[] {
+    const present = new Set(this.messages.toArray().map((m) => m.id));
+    const missing = messages.filter((m) => !present.has(m.id));
+    if (missing.length > 0) this.messages.push(missing.map((m) => ({ ...m })));
+    return missing;
+  }
+
   getMessages(): MessageDto[] {
     return this.messages.toArray();
   }

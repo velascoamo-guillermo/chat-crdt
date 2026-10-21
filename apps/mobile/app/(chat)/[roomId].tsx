@@ -16,7 +16,13 @@ import {
 } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
-import { useRoomMessages, useRoomWsStatus, useRoomCrypto } from "../../src/store/chat.store";
+import {
+  useChatStore,
+  useRoomMessages,
+  useRoomWsStatus,
+  useRoomCrypto,
+  useRoomE2eeRejection,
+} from "../../src/store/chat.store";
 import { useRoomsStore, useRoomE2eeState } from "../../src/store/rooms.store";
 import { useSync } from "../../src/hooks/useSync";
 import { useEnableRoomE2ee } from "../../src/hooks/useE2ee";
@@ -127,6 +133,9 @@ export default function ChatScreen() {
 
   const [composerHeight, setComposerHeight] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
+  // T10: plaintext the server refused in this E2EE room, already retracted
+  // from the chat; Composer puts it back in the draft.
+  const e2eeRejection = useRoomE2eeRejection(roomId);
 
   const handleComposerLayout = useCallback((e: LayoutChangeEvent) => {
     setComposerHeight(e.nativeEvent.layout.height);
@@ -148,12 +157,13 @@ export default function ChatScreen() {
       try {
         sendMessage(content);
         setSendError(null);
+        useChatStore.getState().clearE2eeRejection(roomId);
       } catch (err) {
         setSendError(err instanceof Error ? err.message : "Failed to send message");
         throw err;
       }
     },
-    [sendMessage],
+    [sendMessage, roomId],
   );
 
   if (membership === "not-a-member") {
@@ -226,6 +236,14 @@ export default function ChatScreen() {
               </Text>
             </View>
           ) : null}
+          {e2eeRejection ? (
+            <Text
+              testID="e2ee-rejection-notice"
+              style={[styles.e2eeBannerError, { color: t.status.offline, textAlign: "center" }]}
+            >
+              Message not sent: encryption required. Your text is back in the composer.
+            </Text>
+          ) : null}
           {sendError ? (
             <Text style={[styles.e2eeBannerError, { color: t.status.offline, textAlign: "center" }]}>
               {sendError}
@@ -263,7 +281,12 @@ export default function ChatScreen() {
               </Text>
             </>
           )}
-          <Composer onSend={handleSend} sendTyping={sendTyping} disabled={!composerReady} />
+          <Composer
+            onSend={handleSend}
+            sendTyping={sendTyping}
+            disabled={!composerReady}
+            restoreDraft={e2eeRejection}
+          />
         </View>
       </KeyboardStickyView>
     </KeyboardGestureArea>

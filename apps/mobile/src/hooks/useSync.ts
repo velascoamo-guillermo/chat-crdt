@@ -62,6 +62,9 @@ export function useSync(roomId: string) {
   useEffect(() => {
     if (!token || roomId === 'default') return;
     void useRoomsStore.getState().refreshRoom(roomId);
+    // Leaving drops this entry's result, so a re-entry starts 'unknown'
+    // instead of rendering one frame from the previous entry's state.
+    return () => useRoomsStore.getState().stopRoomRefresh(roomId);
   }, [token, roomId]);
 
   useEffect(() => {
@@ -137,6 +140,20 @@ export function useSync(roomId: string) {
           if (status === 'connected' && roomId !== 'default') {
             void useRoomsStore.getState().refreshRoom(roomId);
           }
+        },
+        // T10: the room is (or just became) E2EE — gate the composer now
+        // rather than after the next refresh or the first envelope.
+        onRoomEpoch: (keyId) => {
+          if (roomId !== 'default') useRoomsStore.getState().noteRoomEpoch(roomId, keyId);
+        },
+        // T10: the server refused plaintext we sent into this E2EE room. The
+        // provider already retracted those messages (so its resync goes
+        // through and nothing queued alongside them is lost); gate the room
+        // and hand our own text back to the composer.
+        onE2eeRejected: ({ keyId, retracted }) => {
+          useRoomsStore.getState().noteRoomEpoch(roomId, keyId);
+          const mine = retracted.filter((m) => m.userId === user.id).map((m) => m.content);
+          if (mine.length > 0) useChatStore.getState().noteE2eeRejection(roomId, mine.join('\n'));
         },
         onAuthError: (code) => {
           if (code === NOT_MEMBER_CLOSE_CODE) {

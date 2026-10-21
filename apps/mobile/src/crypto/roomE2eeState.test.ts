@@ -45,22 +45,39 @@ describe('resolveRoomE2eeState', () => {
     ).toBe('e2ee');
   });
 
-  describe('offline (refresh failed)', () => {
+  describe('offline (no network and no sync socket)', () => {
     it('cached E2EE stays e2ee', () => {
-      expect(resolveRoomE2eeState({ cachedKeyId: 1, refresh: { status: 'failed' }, everE2ee: false })).toBe(
+      expect(resolveRoomE2eeState({ cachedKeyId: 1, refresh: { status: 'offline' }, everE2ee: false })).toBe(
         'e2ee'
       );
     });
 
     it('sticky ever-E2EE flag keeps a stale cached 0 at e2ee', () => {
-      expect(resolveRoomE2eeState({ cachedKeyId: 0, refresh: { status: 'failed' }, everE2ee: true })).toBe(
+      expect(resolveRoomE2eeState({ cachedKeyId: 0, refresh: { status: 'offline' }, everE2ee: true })).toBe(
         'e2ee'
       );
     });
 
     it('a room never seen as E2EE may stay plaintext offline', () => {
-      expect(resolveRoomE2eeState({ cachedKeyId: 0, refresh: { status: 'failed' }, everE2ee: false })).toBe(
+      expect(resolveRoomE2eeState({ cachedKeyId: 0, refresh: { status: 'offline' }, everE2ee: false })).toBe(
         'plaintext'
+      );
+    });
+  });
+
+  // T10 review I2: an HTTP error (5xx, 401...), a network blip while the
+  // socket is up, or the room missing from the list says nothing about the
+  // room's E2EE state, so it must not unlock plaintext.
+  describe('refresh error (server reachable or socket up)', () => {
+    it('never-E2EE room with cached 0 stays unknown (gated)', () => {
+      expect(resolveRoomE2eeState({ cachedKeyId: 0, refresh: { status: 'error' }, everE2ee: false })).toBe(
+        'unknown'
+      );
+    });
+
+    it('cached E2EE stays e2ee', () => {
+      expect(resolveRoomE2eeState({ cachedKeyId: 2, refresh: { status: 'error' }, everE2ee: false })).toBe(
+        'e2ee'
       );
     });
   });

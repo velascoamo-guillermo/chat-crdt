@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { useAuthStore } from './auth.store';
+import { useChatStore } from './chat.store';
 import { E2eeStickyStore } from '../crypto/e2eeStickyStore';
 import { secureStoreBackend } from '../crypto/secureStoreBackend';
 import {
@@ -7,6 +8,7 @@ import {
   type RoomE2eeState,
   type RoomRefreshState,
 } from '../crypto/roomE2eeState';
+import { createLatestWins, createRoomRefresher, type RoomsFetchResult } from '../crypto/roomRefresher';
 
 const API = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -41,9 +43,45 @@ async function extractErrorMessage(res: Response, fallback: string): Promise<str
 
 const e2eeSticky = new E2eeStickyStore(secureStoreBackend);
 
-// One in-flight authoritative refresh per room: room entry and the first WS
-// 'connected' fire close together and should share a single GET.
-const refreshesInFlight = new Map<string, Promise<void>>();
+// Both GET /rooms callers (rooms screen, per-room refresh) go through this, so
+// a response that started earlier never overwrites a newer list.
+const roomsRequests = createLatestWins();
+
+async function requestRooms(): Promise<RoomsFetchResult<RoomSummary>> {
+  const token = useAuthStore.getState().token;
+  if (!token) return { kind: 'http-error', status: 401 };
+  const seq = roomsRequests.begin();
+  let res: Response;
+  try {
+    res = await fetch(`${API}/rooms`, { headers: { Authorization: `Bearer ${token}` } });
+  } catch {
+    return { kind: 'network-error' };
+  }
+  if (!res.ok) return { kind: 'http-error', status: res.status };
+  const rooms = (await res.json()) as RoomSummary[];
+  if (roomsRequests.tryApply(seq)) {
+    useRoomsStore.setState({ rooms });
+    rememberE2eeRooms(rooms);
+  }
+  return { kind: 'ok', rooms };
+}
+
+const roomRefresher = createRoomRefresher<RoomSummary>({
+  fetchRooms: requestRooms,
+  isSocketConnected: (room) => useChatStore.getState().wsStatusByRoom[room] === 'connected',
+  wasEverE2ee: (room) => e2eeSticky.wasEverE2ee(room),
+  onEverE2ee: (room) =>
+    useRoomsStore.setState((s) => ({ everE2eeByRoom: { ...s.everE2eeByRoom, [room]: true } })),
+  // requestRooms already applied the list (latest-wins).
+  onRooms: () => undefined,
+  onRefresh: (room, state) =>
+    useRoomsStore.setState((s) => {
+      const { [room]: _previous, ...rest } = s.refreshByRoom;
+      return { refreshByRoom: state ? { ...rest, [room]: state } : rest };
+    }),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+});
 
 interface RoomsState {
   rooms: RoomSummary[];
@@ -55,6 +93,10 @@ interface RoomsState {
   everE2eeByRoom: Record<string, boolean>;
   fetchRooms: () => Promise<void>;
   refreshRoom: (name: string) => Promise<void>;
+  /** T10: the room screen went away — stop retrying and forget its refresh state. */
+  stopRoomRefresh: (name: string) => void;
+  /** T10: the server says this room is E2EE at `keyId` (sync socket frame). */
+  noteRoomEpoch: (name: string, keyId: number) => void;
   createRoom: (name: string) => Promise<RoomSummary>;
   joinRoom: (name: string) => Promise<RoomSummary>;
 }
@@ -75,20 +117,15 @@ export const useRoomsStore = create<RoomsState>((set, get) => ({
     // last "winning" regardless of which one was actually most recent.
     if (get().isLoading) return;
     set({ isLoading: true, error: null });
-    try {
-      const res = await fetch(`${API}/rooms`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to load rooms'));
-      const rooms = (await res.json()) as RoomSummary[];
-      set({ rooms, isLoading: false });
-      rememberE2eeRooms(rooms);
-    } catch (err) {
-      set({
-        error: err instanceof Error ? err.message : 'Failed to load rooms',
-        isLoading: false,
-      });
-    }
+    const result = await requestRooms();
+    set(
+      result.kind === 'ok'
+        ? { isLoading: false }
+        : {
+            isLoading: false,
+            error: result.kind === 'http-error' ? `Failed to load rooms (${result.status})` : 'Failed to load rooms',
+          },
+    );
   },
 
   // T10: the rooms list may have been fetched before an admin enabled E2EE,
@@ -96,40 +133,28 @@ export const useRoomsStore = create<RoomsState>((set, get) => ({
   // re-reads it from the server (GET /rooms — there is no single-room GET,
   // and the list is small) and reports the outcome per room; until it
   // settles, useRoomE2eeState reads 'unknown' and the composer stays gated.
-  // Not routed through fetchRooms: its overlap guard returns early without a
-  // result, which would leave this room's state undecided.
-  refreshRoom: (name: string) => {
-    const existing = refreshesInFlight.get(name);
-    if (existing) return existing;
+  // Failures other than "truly offline" stay gated and retry with backoff
+  // until stopRoomRefresh (src/crypto/roomRefresher.ts). Not routed through
+  // fetchRooms: its overlap guard returns early without a result.
+  refreshRoom: (name: string) => roomRefresher.refresh(name),
 
-    const setRefresh = (state: RoomRefreshState) =>
-      set((s) => ({ refreshByRoom: { ...s.refreshByRoom, [name]: state } }));
+  stopRoomRefresh: (name: string) => roomRefresher.stop(name),
 
-    const run = (async () => {
-      setRefresh({ status: 'pending' });
-      const everE2ee = await e2eeSticky.wasEverE2ee(name);
-      set((s) => ({ everE2eeByRoom: { ...s.everE2eeByRoom, [name]: everE2ee || !!s.everE2eeByRoom[name] } }));
-      try {
-        const token = useAuthStore.getState().token;
-        if (!token) throw new Error('Not authenticated');
-        const res = await fetch(`${API}/rooms`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error(await extractErrorMessage(res, 'Failed to load rooms'));
-        const rooms = (await res.json()) as RoomSummary[];
-        set({ rooms });
-        rememberE2eeRooms(rooms);
-        const room = rooms.find((r) => r.name === name);
-        // Missing = not (or no longer) a member; the sync socket reports that
-        // separately (4003). Treated like a failed refresh here.
-        setRefresh(room ? { status: 'ok', currentKeyId: room.currentKeyId } : { status: 'failed' });
-      } catch {
-        setRefresh({ status: 'failed' });
-      }
-    })().finally(() => refreshesInFlight.delete(name));
-
-    refreshesInFlight.set(name, run);
-    return run;
+  // Epochs only grow, so the frame is authoritative: bump the cached summary
+  // (useE2eeCipher builds the cipher from it), settle the refresh as E2EE and
+  // persist the sticky flag. The composer gates on the very next render.
+  noteRoomEpoch: (name: string, keyId: number) => {
+    if (keyId <= 0) return;
+    set((s) => {
+      const previous = s.refreshByRoom[name];
+      const known = previous?.status === 'ok' ? previous.currentKeyId : 0;
+      return {
+        rooms: s.rooms.map((r) => (r.name === name ? { ...r, currentKeyId: Math.max(r.currentKeyId, keyId) } : r)),
+        refreshByRoom: { ...s.refreshByRoom, [name]: { status: 'ok', currentKeyId: Math.max(known, keyId) } },
+        everE2eeByRoom: { ...s.everE2eeByRoom, [name]: true },
+      };
+    });
+    void e2eeSticky.markE2ee(name).catch(() => undefined);
   },
 
   createRoom: async (name: string) => {

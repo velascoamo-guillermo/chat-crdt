@@ -38,6 +38,13 @@ interface ChatState {
   wsStatusByRoom: Record<string, WsStatus>;
   mountCounts: Record<string, number>;
   roomCryptoByRoom: Record<string, RoomCryptoState | undefined>;
+  /**
+   * T10: text the server refused because it was sent in plaintext into an
+   * E2EE room (already retracted from the doc). The room screen puts it back
+   * in the composer and tells the user. Survives clearRoom on purpose: it's
+   * the user's unsent text, not room data. `seq` makes each rejection distinct.
+   */
+  e2eeRejectionByRoom: Record<string, E2eeRejection | undefined>;
   setMessages: (roomId: string, messages: MessageDto[]) => void;
   setWsStatus: (roomId: string, status: WsStatus) => void;
   registerMount: (roomId: string) => void;
@@ -45,13 +52,23 @@ interface ChatState {
   setRoomCipher: (roomId: string, cipher: LibsodiumContentCipher) => void;
   setPendingEpochsForMe: (roomId: string, epochs: Set<number>) => void;
   bumpRoomCrypto: (roomId: string) => void;
+  noteE2eeRejection: (roomId: string, text: string) => void;
+  clearE2eeRejection: (roomId: string) => void;
 }
+
+export interface E2eeRejection {
+  text: string;
+  seq: number;
+}
+
+let e2eeRejectionSeq = 0;
 
 export const useChatStore = create<ChatState>((set) => ({
   messagesByRoom: {},
   wsStatusByRoom: {},
   mountCounts: {},
   roomCryptoByRoom: {},
+  e2eeRejectionByRoom: {},
   setMessages: (roomId, messages) =>
     set((s) => ({ messagesByRoom: { ...s.messagesByRoom, [roomId]: messages } })),
   setWsStatus: (roomId, wsStatus) =>
@@ -98,7 +115,22 @@ export const useChatStore = create<ChatState>((set) => ({
         roomCryptoByRoom: { ...s.roomCryptoByRoom, [roomId]: { ...existing, version: existing.version + 1 } },
       };
     }),
+  noteE2eeRejection: (roomId, text) =>
+    // Each rejection carries only its own text; the composer appends it to
+    // whatever draft is already there, so nothing typed is lost.
+    set((s) => ({
+      e2eeRejectionByRoom: { ...s.e2eeRejectionByRoom, [roomId]: { text, seq: ++e2eeRejectionSeq } },
+    })),
+  clearE2eeRejection: (roomId) =>
+    set((s) => {
+      const { [roomId]: _rejection, ...e2eeRejectionByRoom } = s.e2eeRejectionByRoom;
+      return { e2eeRejectionByRoom };
+    }),
 }));
+
+export function useRoomE2eeRejection(roomId: string): E2eeRejection | undefined {
+  return useChatStore((s) => s.e2eeRejectionByRoom[roomId]);
+}
 
 const EMPTY_PENDING_EPOCHS: Set<number> = new Set();
 

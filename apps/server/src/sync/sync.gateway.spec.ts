@@ -9,6 +9,7 @@ import { FakeSocket, fakeReq, redisMock } from './__test__/fakes';
 import * as Y from 'yjs';
 import { RoomState } from './room-state';
 import * as encoding from 'lib0/encoding';
+import * as decoding from 'lib0/decoding';
 import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
 
@@ -647,6 +648,166 @@ describe('SyncGateway', () => {
       listener('db-a', 1);
 
       expect(room.currentKeyId).toBe(3);
+    });
+
+    it('never gates the default lobby, even if it somehow carries an epoch', () => {
+      const room = seedRoom('default', 1);
+      const sender = new FakeSocket();
+      room.clients.add(sender as any);
+
+      (gateway as any).handleMessage(
+        sender,
+        room,
+        updateFrame((d) => d.getArray('messages').push([msg('m1', 'hello lobby')])),
+      );
+
+      expect(room.doc.getArray('messages').length).toBe(1);
+      expect(metrics.incE2eeRejectedUpdates).not.toHaveBeenCalled();
+    });
+
+    describe('typed frames (client recovery + live gating)', () => {
+      const E2EE_REJECTED = 20;
+      const ROOM_EPOCH = 21;
+
+      function framesOfType(socket: FakeSocket, type: number): decoding.Decoder[] {
+        return socket.sent
+          .map((bytes) => decoding.createDecoder(new Uint8Array(bytes)))
+          .filter((d) => decoding.readVarUint(d) === type);
+      }
+
+      function readRejection(d: decoding.Decoder) {
+        const keyId = decoding.readVarUint(d);
+        const count = decoding.readVarUint(d);
+        const ids = Array.from({ length: count }, () => decoding.readVarString(d));
+        return { keyId, ids };
+      }
+
+      it('tells the rejected sender which messages were refused, then asks it to resync', () => {
+        const room = seedRoom('team-a', 2);
+        const sender = new FakeSocket();
+        room.clients.add(sender as any);
+        jest.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+
+        (gateway as any).handleMessage(
+          sender,
+          room,
+          updateFrame((d) => d.getArray('messages').push([msg('m1', ENVELOPE), msg('m2', SECRET)])),
+        );
+
+        const rejections = framesOfType(sender, E2EE_REJECTED);
+        expect(rejections).toHaveLength(1);
+        expect(readRejection(rejections[0])).toEqual({ keyId: 2, ids: ['m2'] });
+        // The frame names ids only — it must never echo the plaintext back.
+        for (const bytes of sender.sent) expect(Buffer.from(bytes).toString('utf8')).not.toContain(SECRET);
+        // Followed by a sync step1, so the client answers with a fresh step2.
+        const last = decoding.createDecoder(new Uint8Array(sender.sent.at(-1)!));
+        expect(decoding.readVarUint(last)).toBe(0); // MSG_SYNC
+        expect(decoding.readVarUint(last)).toBe(0); // step1
+      });
+
+      it('accepts the resync once the client retracted its plaintext, so its queued envelopes land', () => {
+        const room = seedRoom('team-a', 1);
+        const sender = new FakeSocket();
+        room.clients.add(sender as any);
+        jest.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+        const clientDoc = new Y.Doc({ gc: true });
+        const messages = clientDoc.getArray('messages');
+        messages.push([msg('m1', SECRET), msg('m2', ENVELOPE)]);
+        const stepFrame = () => {
+          const enc = encoding.createEncoder();
+          encoding.writeVarUint(enc, 0);
+          syncProtocol.writeSyncStep2(enc, clientDoc);
+          return Buffer.from(encoding.toUint8Array(enc));
+        };
+        (gateway as any).handleMessage(sender, room, stepFrame());
+        expect(room.doc.getArray('messages').length).toBe(0);
+
+        messages.delete(0, 1); // what the client does on E2EE_REJECTED
+        (gateway as any).handleMessage(sender, room, stepFrame());
+
+        expect(room.doc.getArray('messages').toArray()).toEqual([msg('m2', ENVELOPE)]);
+      });
+
+      it('sends the current epoch to a client joining an E2EE room', async () => {
+        jwt.verify.mockReturnValue({ sub: 'user-1' });
+        rooms.isMember.mockResolvedValue(true);
+        prisma.room.findUnique.mockResolvedValue({ id: 'db-a', name: 'team-a', currentKeyId: 3, yjsState: null });
+        const client = new FakeSocket();
+
+        await gateway.handleConnection(client as any, fakeReq({ room: 'team-a', token: 'ok' }));
+
+        const epochs = framesOfType(client, ROOM_EPOCH);
+        expect(epochs).toHaveLength(1);
+        expect(decoding.readVarUint(epochs[0])).toBe(3);
+      });
+
+      it('sends no epoch frame to a client joining a plaintext room', async () => {
+        jwt.verify.mockReturnValue({ sub: 'user-1' });
+        rooms.isMember.mockResolvedValue(true);
+        prisma.room.findUnique.mockResolvedValue({ id: 'db-b', name: 'team-b', currentKeyId: 0, yjsState: null });
+        const client = new FakeSocket();
+
+        await gateway.handleConnection(client as any, fakeReq({ room: 'team-b', token: 'ok' }));
+
+        expect(framesOfType(client, ROOM_EPOCH)).toHaveLength(0);
+      });
+
+      it('pushes a newly claimed epoch to every client already in the room', () => {
+        const room = seedRoom('team-a', 0);
+        (room as any).dbId = 'db-a';
+        const inRoom = new FakeSocket();
+        room.clients.add(inRoom as any);
+        gateway.onModuleInit();
+        const listener = roomKeys.onEpochAdvanced.mock.calls[0][0] as (roomId: string, keyId: number) => void;
+
+        listener('db-a', 1);
+
+        const epochs = framesOfType(inRoom, ROOM_EPOCH);
+        expect(epochs).toHaveLength(1);
+        expect(decoding.readVarUint(epochs[0])).toBe(1);
+      });
+
+      it('pushes an epoch claimed on another instance (Redis) to local clients', () => {
+        const room = seedRoom('team-a', 0);
+        (room as any).dbId = 'db-a';
+        const inRoom = new FakeSocket();
+        room.clients.add(inRoom as any);
+        gateway.onModuleInit();
+        const onPmessage = sub.on.mock.calls.find(([event]) => event === 'pmessage')![1] as (
+          pattern: string,
+          channel: string,
+          message: string,
+        ) => void;
+
+        onPmessage('room:epoch:*', 'room:epoch:db-a', JSON.stringify({ origin: 'other-instance', keyId: 2 }));
+
+        expect(framesOfType(inRoom, ROOM_EPOCH)).toHaveLength(1);
+      });
+
+      it('does not re-push an epoch the room already has', () => {
+        const room = seedRoom('team-a', 2);
+        (room as any).dbId = 'db-a';
+        const inRoom = new FakeSocket();
+        room.clients.add(inRoom as any);
+        gateway.onModuleInit();
+        const listener = roomKeys.onEpochAdvanced.mock.calls[0][0] as (roomId: string, keyId: number) => void;
+
+        listener('db-a', 2);
+
+        expect(framesOfType(inRoom, ROOM_EPOCH)).toHaveLength(0);
+      });
+
+      it('survives a failed epoch publish to Redis', async () => {
+        pub.publish.mockRejectedValueOnce(new Error('redis down'));
+        const warn = jest.spyOn((gateway as any).logger, 'warn').mockImplementation(() => undefined);
+        gateway.onModuleInit();
+        const listener = roomKeys.onEpochAdvanced.mock.calls[0][0] as (roomId: string, keyId: number) => void;
+
+        listener('db-a', 1);
+        await new Promise((r) => setImmediate(r));
+
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('epoch'));
+      });
     });
   });
 });

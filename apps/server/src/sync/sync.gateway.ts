@@ -19,12 +19,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RoomsService } from '../rooms/rooms.service';
 import { RoomKeysService } from '../rooms/room-keys.service';
 import { RoomState } from './room-state';
-import { isEnvelopedOnlyUpdate } from './e2ee-update-gate';
+import { checkEnvelopedUpdate } from './e2ee-update-gate';
 import { MetricsService } from '../metrics/metrics.service';
 import { randomUUID } from 'crypto';
+import { WsMsgType } from '@chat-crdt/shared';
 
 const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
+const MSG_E2EE_REJECTED = WsMsgType.E2EE_REJECTED;
+const MSG_ROOM_EPOCH = WsMsgType.ROOM_EPOCH;
 const ROOM_GC_DELAY_MS = 30_000;
 const PERSIST_DEBOUNCE_MS = 5_000;
 
@@ -136,15 +139,31 @@ export class SyncGateway
     this.roomKeys.onEpochAdvanced((dbId, keyId) => {
       this.raiseEpoch(dbId, keyId);
       const payload: EpochPayload = { origin: this.instanceId, keyId };
-      this.pub.publish(`${EPOCH_CHANNEL_PREFIX}${dbId}`, JSON.stringify(payload));
+      // Pub/sub is at-most-once: a lost epoch leaves other instances' already
+      // loaded copies of this room ungated until they reload it (see raiseEpoch).
+      this.pub
+        .publish(`${EPOCH_CHANNEL_PREFIX}${dbId}`, JSON.stringify(payload))
+        .catch((err: Error) => this.logger.warn(`Failed to publish room epoch: ${err.message}`));
     });
   }
 
+  /**
+   * Raises the epoch of every loaded copy of a room and pushes it to that
+   * room's clients, so a member already in the room gates its composer right
+   * away instead of after its next refresh (T10). The window this leaves on
+   * OTHER instances is unbounded, not "a few ms": Redis pub/sub is
+   * at-most-once, and nothing re-reads the epoch from the DB for a room that
+   * stays loaded — a missed room:epoch message leaves it ungated until it is
+   * GC'd and reloaded. Defense in depth only; the client gate is primary.
+   */
   private raiseEpoch(dbId: string, keyId: number): void {
     if (typeof keyId !== 'number') return;
     this.epochByDbId.set(dbId, Math.max(this.epochByDbId.get(dbId) ?? 0, keyId));
     for (const room of this.rooms.values()) {
-      if (room.dbId === dbId) room.currentKeyId = Math.max(room.currentKeyId, keyId);
+      if (room.dbId !== dbId || keyId <= room.currentKeyId) continue;
+      room.currentKeyId = keyId;
+      const frame = encodeRoomEpoch(keyId);
+      for (const client of room.clients) client.send(frame);
     }
   }
 
@@ -199,6 +218,12 @@ export class SyncGateway
     // Heartbeat liveness: alive on connect, re-armed on every pong.
     this.alive.set(client, true);
     client.on('pong', () => this.alive.set(client, true));
+
+    // T10: tell the client the room is E2EE before anything else, so a stale
+    // cached summary can't keep its composer in plaintext mode.
+    if (room.currentKeyId > 0 && room.roomId !== 'default') {
+      client.send(encodeRoomEpoch(room.currentKeyId));
+    }
 
     // Step 1 — send server state vector so client can compute the diff it needs to send us
     const enc1 = encoding.createEncoder();
@@ -298,17 +323,26 @@ export class SyncGateway
 
       if (msgType === MSG_SYNC) {
         this.metrics.incMessages('sync');
-        if (this.isPlaintextIntoE2eeRoom(room, decoder)) {
-          // Not applied, so never broadcast, published or persisted. The
-          // sender keeps its local insert (its doc diverges from the room's);
-          // honest clients never get here since they gate the composer until
-          // the room's E2EE state is confirmed (T10 client fix). Never log
-          // the update itself — it holds the plaintext.
+        const rejected = this.plaintextIntoE2eeRoom(room, decoder);
+        if (rejected) {
+          // Not applied, so never broadcast, published or persisted. Never
+          // log the update itself — it holds the plaintext.
           this.metrics.incE2eeRejectedUpdates();
           this.logger.warn(
             `Rejected sync update with a non-E2E1 message in E2EE room "${room.roomId}" ` +
               `(epoch ${room.currentKeyId})`,
           );
+          // Recovery (T10 review I1): the whole update was refused, including
+          // any enveloped messages queued alongside the plaintext. Name the
+          // offending message ids (never their content) so the client deletes
+          // them locally, then ask for its state again: its next step2 carries
+          // the deleted items as content-less structs and everything else
+          // lands, instead of the same step2 bouncing on every reconnect.
+          client.send(encodeE2eeRejected(room.currentKeyId, rejected.rejectedMessageIds));
+          const step1 = encoding.createEncoder();
+          encoding.writeVarUint(step1, MSG_SYNC);
+          syncProtocol.writeSyncStep1(step1, room.doc);
+          client.send(encoding.toUint8Array(step1));
           return;
         }
         const encoder = encoding.createEncoder();
@@ -335,17 +369,22 @@ export class SyncGateway
 
   /**
    * T10 defense in depth: in a room whose currentKeyId > 0, a sync step2 or
-   * update that inserts any message without an E2E1 envelope is rejected
-   * whole. Peeks on a clone of the decoder so the caller still reads the
-   * message from the start. The 'default' lobby is always plaintext (ADR-010
+   * update that inserts any message without a well-formed E2E1 envelope is
+   * rejected whole; returns the offending message ids, or null to accept.
+   * Peeks on a clone of the decoder so the caller still reads the message
+   * from the start. The 'default' lobby is always plaintext (ADR-010
    * amendment #3), so it's never gated.
    */
-  private isPlaintextIntoE2eeRoom(room: RoomState, decoder: decoding.Decoder): boolean {
-    if (room.currentKeyId <= 0 || room.roomId === 'default') return false;
+  private plaintextIntoE2eeRoom(
+    room: RoomState,
+    decoder: decoding.Decoder,
+  ): { rejectedMessageIds: string[] } | null {
+    if (room.currentKeyId <= 0 || room.roomId === 'default') return null;
     const peek = decoding.clone(decoder);
     const syncType = decoding.readVarUint(peek);
-    if (syncType !== SYNC_STEP2 && syncType !== SYNC_UPDATE) return false;
-    return !isEnvelopedOnlyUpdate(decoding.readVarUint8Array(peek));
+    if (syncType !== SYNC_STEP2 && syncType !== SYNC_UPDATE) return null;
+    const result = checkEnvelopedUpdate(decoding.readVarUint8Array(peek));
+    return result.ok ? null : result;
   }
 
   /** Fixed-window per-client message rate limiter. */
@@ -531,4 +570,22 @@ export class SyncGateway
       );
     }
   }
+}
+
+/** T10 ROOM_EPOCH frame: varUint type, varUint keyId. */
+function encodeRoomEpoch(keyId: number): Uint8Array {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, MSG_ROOM_EPOCH);
+  encoding.writeVarUint(encoder, keyId);
+  return encoding.toUint8Array(encoder);
+}
+
+/** T10 E2EE_REJECTED frame: varUint type, varUint keyId, varUint n, n varString message ids. */
+function encodeE2eeRejected(keyId: number, messageIds: string[]): Uint8Array {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, MSG_E2EE_REJECTED);
+  encoding.writeVarUint(encoder, keyId);
+  encoding.writeVarUint(encoder, messageIds.length);
+  for (const id of messageIds) encoding.writeVarString(encoder, id);
+  return encoding.toUint8Array(encoder);
 }

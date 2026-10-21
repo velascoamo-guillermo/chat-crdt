@@ -43,7 +43,7 @@ export function fakeReq(opts: { room?: string; token?: string } = {}): IncomingM
 
 export function redisMock() {
   return {
-    publish: jest.fn(),
+    publish: jest.fn().mockResolvedValue(1),
     psubscribe: jest.fn(),
     on: jest.fn(),
   };

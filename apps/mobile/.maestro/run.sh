@@ -26,25 +26,21 @@
 #     WebSocket rejects apps/server's handshake with code 1002, Node's doesn't)
 #   - `docker compose -f infra/docker-compose.yml up -d` (postgres + redis)
 #   - `bunx prisma migrate deploy` in apps/server (schema up to date)
-#   - Mobile app built + installed on an iOS simulator, with the udid booted
-#     (`cd apps/mobile && bun run ios`, or `expo run:ios` once, then keep the
-#     simulator booted — this script only launches/relaunches, never (re)builds)
-#   - Metro running for that app WITH the QA readout flag set ([roomId].tsx gates
-#     chat-message-count/chat-order-digest/chat-ws-status behind it, off by default —
-#     see the review-round-1 note there), e.g.:
-#       cd apps/mobile && EXPO_PUBLIC_QA_READOUT=1 bun run dev
-#     (EXPO_PUBLIC_API_URL / EXPO_PUBLIC_WS_URL must also point at a host the simulator
-#     can actually reach — plain `localhost` works for the iOS simulator, which shares
-#     the host Mac's network namespace; a stale LAN IP in apps/mobile/.env will hang
-#     every request. Override at Metro start time, same as EXPO_PUBLIC_QA_READOUT.)
+#   - The e2e app built + installed on the target device (release config, JS bundle
+#     embedded, QA readout on, API at localhost:3001). Build once per native or JS
+#     change, then run this as often as you like:
+#       apps/mobile/.maestro/scripts/build-e2e.sh ios <simulator-udid>
+#       apps/mobile/.maestro/scripts/build-e2e.sh android <adb-serial>
+#     No Metro needed. The preflight below refuses a debug/dev-client build, and
+#     flow 01 fails with a labelled step if the QA readout isn't in the build.
 #
 # Usage:
 #   apps/mobile/.maestro/run.sh
-#   DEVICE_UDID=<simulator-udid> apps/mobile/.maestro/run.sh   # if more than one
-#                                                               # simulator is booted
+#   DEVICE_UDID=<simulator-udid|emulator-serial> apps/mobile/.maestro/run.sh
+#     (needed if more than one simulator/emulator is booted)
 #
-# Everything below uses default ports (server :3001, Metro :8081) and the shared
-# infra/docker-compose.yml postgres — this ticket's lane per the amendment in #13.
+# Everything below uses the default server port :3001 and the shared
+# infra/docker-compose.yml postgres.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -76,7 +72,36 @@ if [ -n "${DEVICE_UDID:-}" ]; then
   MAESTRO_DEVICE_ARGS=(--device "$DEVICE_UDID")
 fi
 
-echo "==> Building @chat-crdt/sync-engine (dist/ is gitignored — needed by both the app bundle and client B on a clean clone)"
+APP_ID="com.chatcrdt.app"
+IS_ANDROID=0
+if [[ "${DEVICE_UDID:-}" == emulator-* ]]; then
+  IS_ANDROID=1
+fi
+
+not_e2e_build() {
+  echo "==> $APP_ID on ${DEVICE_UDID:-the booted simulator} is $1." >&2
+  echo "    run.sh needs the e2e build (no Metro). Build it once with:" >&2
+  echo "      apps/mobile/.maestro/scripts/build-e2e.sh <ios|android> <device>" >&2
+  exit 1
+}
+
+echo "==> Preflight: installed app must be the e2e build (embedded bundle, no Metro)"
+if [ "$IS_ANDROID" = 1 ]; then
+  adb -s "$DEVICE_UDID" shell pm path "$APP_ID" >/dev/null 2>&1 || not_e2e_build "not installed"
+  # Release builds aren't debuggable; the debug/dev-client build loads JS from Metro.
+  if adb -s "$DEVICE_UDID" shell dumpsys package "$APP_ID" | grep -q 'pkgFlags=.*DEBUGGABLE'; then
+    not_e2e_build "a debug build"
+  fi
+  # The release app reaches apps/server at localhost:3001 through this.
+  adb -s "$DEVICE_UDID" reverse tcp:3001 tcp:3001 >/dev/null
+else
+  APP_CONTAINER="$(xcrun simctl get_app_container "${DEVICE_UDID:-booted}" "$APP_ID" app 2>/dev/null)" \
+    || not_e2e_build "not installed"
+  # Debug builds skip bundling (SKIP_BUNDLING) and load JS from Metro.
+  [ -f "$APP_CONTAINER/main.jsbundle" ] || not_e2e_build "a debug build (no embedded main.jsbundle)"
+fi
+
+echo "==> Building @chat-crdt/sync-engine (dist/ is gitignored — client B imports it; the app bundle is already built)"
 (cd "$ROOT_DIR/packages/sync-engine" && bun run build)
 
 echo "==> Resetting 'default' room for a deterministic message count"
@@ -84,8 +109,7 @@ echo "==> Resetting 'default' room for a deterministic message count"
 # doc in memory and would push it straight back into the freshly reset room when
 # the server restarts (flow 01's clearState relaunch comes too late). Any OTHER
 # device still in the room must be closed by hand for the same reason.
-APP_ID="com.chatcrdt.app"
-if [[ "${DEVICE_UDID:-}" == emulator-* ]]; then
+if [ "$IS_ANDROID" = 1 ]; then
   adb -s "$DEVICE_UDID" shell am force-stop "$APP_ID" || true
 else
   xcrun simctl terminate "${DEVICE_UDID:-booted}" "$APP_ID" 2>/dev/null || true

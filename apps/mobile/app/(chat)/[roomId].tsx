@@ -44,6 +44,7 @@ import { Composer } from "../../src/components/Composer";
 import { useChatTheme } from "../../src/ui";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { computeOrderDigest } from "../../src/utils/orderDigest";
+import { isQaReadoutEnabled } from "../../src/qa/qaReadout";
 
 const LIST_PADDING = 8;
 
@@ -55,13 +56,11 @@ const HEADER_BASE = Platform.OS === "ios" ? 44 : 56;
 type NativeScroller = { scrollToEnd: (options?: { animated?: boolean }) => void };
 
 // QA-only readout for the Maestro E2E offline-sync flow (apps/mobile/.maestro).
-// Requires BOTH __DEV__ (never true in a release build, regardless of env
-// misconfiguration) AND an explicit opt-in env var — so it stays invisible in
-// ordinary local dev too, and only run.sh's Metro invocation (which sets
-// EXPO_PUBLIC_QA_READOUT=1) turns it on. Verify by launching without the env
-// var: the readout is absent even though __DEV__ is true.
-const QA_READOUT_ENABLED =
-  __DEV__ && process.env.EXPO_PUBLIC_QA_READOUT === "1";
+// Off unless the build sets EXPO_PUBLIC_QA_READOUT=1, which the e2e build
+// (.maestro/scripts/build-e2e.sh, release config) does. A production bundle
+// with the flag fails to build: config/qaReadoutGuard.js, run from
+// metro.config.js.
+const QA_READOUT_ENABLED = isQaReadoutEnabled(process.env.EXPO_PUBLIC_QA_READOUT);
 
 // ADR-010, Key-rotation trigger list item 0 (enablement): no special actor
 // or endpoint beyond the same atomic claim any member can call — in
@@ -419,7 +418,7 @@ export default function ChatScreen() {
           ) : null}
           <TypingIndicator typingUsers={typingUsers} />
           {/* QA-only readout for the Maestro E2E offline-sync flow — gated by
-              QA_READOUT_ENABLED (see above), never present in a release build.
+              QA_READOUT_ENABLED (see above), only in the e2e build.
               Three signals the flow can't get from scraping bubble text alone:
               - chat-message-count: exact merged count. Yjs updates are
                 idempotent (applying the same op twice is a no-op), so this

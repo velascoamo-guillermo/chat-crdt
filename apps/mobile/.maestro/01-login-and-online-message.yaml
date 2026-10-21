@@ -12,8 +12,8 @@
 #   4. Test users + a clean "default" room:
 #      `apps/mobile/.maestro/scripts/server-ctl.sh reset-room` (server stopped)
 #      `bun apps/mobile/.maestro/scripts/setup-users.ts` (server started)
-#   5. Mobile app built and installed on the simulator, Metro running:
-#      `cd apps/mobile && bun run dev` (Metro), `expo run:ios` once to install/build
+#   5. The e2e app built and installed (release config, no Metro):
+#      `apps/mobile/.maestro/scripts/build-e2e.sh <ios|android> <device>`
 #   6. Run with a fresh RUN_ID nonce so message text never collides across runs:
 #      `maestro test apps/mobile/.maestro/01-login-and-online-message.yaml -e RUN_ID=$(date +%s)`
 #
@@ -48,12 +48,12 @@ appId: com.chatcrdt.app
 ---
 - launchApp:
     clearState: true
-# `runFlow.when` checks once, without waiting: on a cold dev-client launch the
-# bundle may still be loading, the guard is skipped, and the app then lands in
-# the chat (Keychain session) with no Email field. Wait for either screen first.
+# `runFlow.when` checks once, without waiting: if the first screen isn't up
+# yet, the guard is skipped and the app then lands in the chat (Keychain
+# session) with no Email field. Wait for either screen first.
 - extendedWaitUntil:
     visible: "(Email|# general.*)"
-    timeout: 60000
+    timeout: 15000
 - runFlow:
     when:
       visible: "# general.*"
@@ -71,6 +71,9 @@ appId: com.chatcrdt.app
     text: "(Not Now|Ahora no)"
     optional: true
 - assertVisible: "# general.*"
+- assertVisible:
+    id: "chat-ws-status"
+    label: "QA readout present (needs the e2e build: .maestro/scripts/build-e2e.sh)"
 - extendedWaitUntil:
     visible: "connected"
     timeout: 15000

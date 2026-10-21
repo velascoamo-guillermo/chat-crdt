@@ -2,10 +2,13 @@ import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
+import { WsMsgType, type MessageDto } from '@chat-crdt/shared';
 import { SyncEngine } from './SyncEngine';
 
 const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
+const MSG_E2EE_REJECTED = WsMsgType.E2EE_REJECTED;
+const MSG_ROOM_EPOCH = WsMsgType.ROOM_EPOCH;
 const MAX_RETRY_DELAY_MS = 30_000;
 const BASE_RETRY_DELAY_MS = 1_000;
 
@@ -23,6 +26,15 @@ export interface WebSocketProviderConfig {
    * app should log out or refresh the token instead.
    */
   onAuthError?: (code: number) => void;
+  /**
+   * T10: the server refused messages this client sent into an E2EE room in
+   * plaintext. They have already been retracted from the doc (so the server's
+   * follow-up step1 gets a clean step2); `retracted` lets the app restore the
+   * text to the composer and tell the user.
+   */
+  onE2eeRejected?: (rejection: { keyId: number; retracted: MessageDto[] }) => void;
+  /** T10: the server says this room is E2EE at `keyId` (on join, and live on enable). */
+  onRoomEpoch?: (keyId: number) => void;
   /** Test-only hook: intercepts outgoing binary messages instead of opening a real WebSocket */
   _testSend?: (data: Uint8Array) => void;
 }
@@ -73,6 +85,12 @@ export class WebSocketProvider {
     if (this.destroyed) return;
     this.setStatus('connected');
     this.flush();
+  }
+
+  /** Test-only: deliver a frame as if the server had sent it. */
+  simulateServerMessage(data: Uint8Array): void {
+    if (this.destroyed) return;
+    this.handleServerMessage(data);
   }
 
   private connect(): void {
@@ -147,6 +165,17 @@ export class WebSocketProvider {
       } else if (msgType === MSG_AWARENESS) {
         const update = decoding.readVarUint8Array(decoder);
         awarenessProtocol.applyAwarenessUpdate(this.awareness, update, this);
+      } else if (msgType === MSG_E2EE_REJECTED) {
+        const keyId = decoding.readVarUint(decoder);
+        const count = decoding.readVarUint(decoder);
+        const ids: string[] = [];
+        for (let i = 0; i < count; i++) ids.push(decoding.readVarString(decoder));
+        // Retract synchronously, before the server's follow-up step1 is
+        // handled, so the step2 we answer it with no longer holds them.
+        const retracted = this.engine.retractMessages(ids);
+        this.config.onE2eeRejected?.({ keyId, retracted });
+      } else if (msgType === MSG_ROOM_EPOCH) {
+        this.config.onRoomEpoch?.(decoding.readVarUint(decoder));
       }
     } catch {
       // swallow malformed messages

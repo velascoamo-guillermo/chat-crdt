@@ -49,6 +49,26 @@ export class SyncEngine {
     return msg;
   }
 
+  /**
+   * T10: deletes the messages with these ids (one transaction) and returns
+   * them. Used when the server refuses plaintext messages in an E2EE room.
+   * The doc garbage-collects deleted content, so the encoded state — and with
+   * it the next sync step2 — no longer carries the retracted text.
+   */
+  retractMessages(ids: readonly string[]): MessageDto[] {
+    const wanted = new Set(ids);
+    const retracted: MessageDto[] = [];
+    this.doc.transact(() => {
+      const all = this.messages.toArray();
+      for (let i = all.length - 1; i >= 0; i--) {
+        if (!wanted.has(all[i].id)) continue;
+        retracted.unshift(all[i]);
+        this.messages.delete(i, 1);
+      }
+    });
+    return retracted;
+  }
+
   getMessages(): MessageDto[] {
     return this.messages.toArray();
   }

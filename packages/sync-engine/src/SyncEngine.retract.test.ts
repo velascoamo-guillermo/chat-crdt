@@ -19,6 +19,21 @@ describe('SyncEngine.retractMessages', () => {
     engine.destroy();
   });
 
+  it("never retracts another user's message, even if the server names it", () => {
+    const engine = new SyncEngine({ roomId: 'r1', userId: 'u1', username: 'alice' });
+    const bob = new SyncEngine({ roomId: 'r1', userId: 'u2', username: 'bob' });
+    const theirs = bob.sendMessage('bob history');
+    engine.applyUpdate(bob.encodeState());
+    const mine = engine.sendMessage('mine');
+
+    const retracted = engine.retractMessages([theirs.id, mine.id]);
+
+    expect(retracted).toEqual([mine]);
+    expect(engine.getMessages()).toEqual([theirs]);
+    engine.destroy();
+    bob.destroy();
+  });
+
   it('ignores ids it does not hold', () => {
     const engine = new SyncEngine({ roomId: 'r1', userId: 'u1', username: 'alice' });
     const a = engine.sendMessage('kept');

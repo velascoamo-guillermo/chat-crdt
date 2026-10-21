@@ -1,4 +1,5 @@
-import { forwardRef, type ComponentRef } from 'react';
+import { forwardRef, useEffect, type ComponentRef } from 'react';
+import { t11 } from '../debug/t11Trace';
 import type { ScrollViewProps } from 'react-native';
 import {
   KeyboardChatScrollView,
@@ -17,6 +18,10 @@ export const ChatScrollView = forwardRef<Ref, Props>(function ChatScrollView(
   { inverted, ...props },
   ref
 ) {
+  useEffect(() => {
+    t11('ChatScrollView mount');
+    return () => t11('ChatScrollView unmount');
+  }, []);
   return (
     <KeyboardChatScrollView
       ref={ref}

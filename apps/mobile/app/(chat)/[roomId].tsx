@@ -30,6 +30,7 @@ import { useAuthStore } from "../../src/store/auth.store";
 import { ChatScrollView } from "../../src/components/ChatScrollView";
 import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
+import { t11 } from "../../src/debug/t11Trace";
 import { EmptyRoom } from "../../src/components/EmptyRoom";
 import { showEmptyRoom } from "../../src/chat/emptyRoomGate";
 import {
@@ -117,6 +118,9 @@ export default function ChatScreen() {
   const wsStatus = useRoomWsStatus(roomId);
   const { sendMessage, sendTyping, getAwareness, membership } = useSync(roomId);
   const { typingUsers, onlineCount } = usePresence(getAwareness(), myUsername);
+  const t11Renders = useRef(0);
+  t11Renders.current += 1;
+  t11("render", { n: t11Renders.current, msgs: messages.length, typing: typingUsers.length, online: onlineCount });
   const router = useRouter();
   const t = useChatTheme();
   const { top, bottom } = useSafeAreaInsets();
@@ -168,11 +172,13 @@ export default function ChatScreen() {
     // getNativeScrollRef() is typed as the component, but returns the
     // mounted ScrollView instance (our ChatScrollView).
     const scroller = listRef.current?.getNativeScrollRef() as unknown as NativeScroller | null;
+    t11("scrollListToEnd", { animated });
     requestAnimationFrame(() => requestAnimationFrame(() => scroller?.scrollToEnd({ animated })));
   }, []);
 
   const handleComposerLayout = useCallback((e: LayoutChangeEvent) => {
     const next = e.nativeEvent.layout.height;
+    t11("composerLayout", { prev: lastComposerHeight.current, next, atEnd: atEndRef.current });
     const action = composerResizeScroll({
       atEnd: atEndRef.current,
       snapped: snappedRef.current,
@@ -223,6 +229,9 @@ export default function ChatScreen() {
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       const n = e.nativeEvent;
       const m = metricsRef.current;
+      if (Math.abs(n.contentOffset.y - m.offset) > 40 || n.contentOffset.y < 200 || Math.abs(n.contentSize.height - m.contentHeight) > 1) {
+        t11("scroll", { y: Math.round(n.contentOffset.y), prevY: Math.round(m.offset), ch: Math.round(n.contentSize.height), vh: Math.round(n.layoutMeasurement.height) });
+      }
       m.offset = n.contentOffset.y;
       m.contentHeight = n.contentSize.height;
       m.visibleHeight = n.layoutMeasurement.height;
@@ -241,6 +250,7 @@ export default function ChatScreen() {
   );
   const handleListContentSize = useCallback(
     (w: number, h: number) => {
+      t11("contentSize", { h: Math.round(h), prevH: Math.round(metricsRef.current.contentHeight), y: Math.round(metricsRef.current.offset) });
       metricsRef.current.contentHeight = h;
       if (pendingEndRef.current !== null) {
         scrollListToEnd(pendingEndRef.current);
@@ -268,6 +278,7 @@ export default function ChatScreen() {
   // animated ref inside a nested requestAnimationFrame worklet.)
   const renderScrollComponent = useCallback(
     (props: ScrollViewProps) => {
+      t11("renderScrollComponent");
       listScrollPropsRef.current = props;
       return (
         <ChatScrollView
@@ -372,6 +383,7 @@ export default function ChatScreen() {
           }}
           keyExtractor={(item) => item.id}
           maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
+          onCommitLayoutEffect={() => t11("flashCommit", { y: Math.round(metricsRef.current.offset) })}
           renderScrollComponent={renderScrollComponent}
           contentContainerStyle={{
             paddingTop: !isLiquidGlassAvailable()

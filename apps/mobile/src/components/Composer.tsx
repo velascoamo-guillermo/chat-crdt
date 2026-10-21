@@ -21,6 +21,7 @@ import {
   sendButtonVisual,
   type SendButtonVisual,
 } from "../chat/composerState";
+import { t11 } from "../debug/t11Trace";
 
 // SF Symbol (iOS) → Material Symbol (Android); a bare SF name renders nothing on Android.
 const ICONS: Record<SendButtonVisual["icon"], { ios: SendButtonVisual["icon"]; android: number }> = {
@@ -64,6 +65,7 @@ export const Composer = memo(function Composer({
 
   const handleChange = useCallback(
     (text: string) => {
+      t11("keystroke", { len: text.length, lines: text.split("\n").length });
       const active = text.trim().length > 0;
       if (active !== hasTextRef.current) {
         hasTextRef.current = active;

@@ -56,6 +56,12 @@ interface ChatState {
   clearE2eeRejection: (roomId: string) => void;
   /** Logout: the next account on the device must not inherit refused text. */
   clearAllE2eeRejections: () => void;
+  /**
+   * Returns the ids not restored before and marks them restored. The same
+   * refused message can bounce twice (old engine, then again after the engine
+   * is rebuilt from the persisted doc); its text must go back only once.
+   */
+  claimRestoredMessages: (ids: readonly string[]) => string[];
 }
 
 export interface E2eeRejection {
@@ -70,6 +76,9 @@ export interface E2eeRejection {
 }
 
 let e2eeRejectionSeq = 0;
+// Message ids (ULIDs, unique across rooms) whose refused text was already
+// handed back to the composer this session.
+const restoredMessageIds = new Set<string>();
 
 export const useChatStore = create<ChatState>((set) => ({
   messagesByRoom: {},
@@ -129,7 +138,15 @@ export const useChatStore = create<ChatState>((set) => ({
     set((s) => ({
       e2eeRejectionByRoom: { ...s.e2eeRejectionByRoom, [roomId]: { text, kind, seq: ++e2eeRejectionSeq } },
     })),
-  clearAllE2eeRejections: () => set({ e2eeRejectionByRoom: {} }),
+  clearAllE2eeRejections: () => {
+    restoredMessageIds.clear();
+    set({ e2eeRejectionByRoom: {} });
+  },
+  claimRestoredMessages: (ids) => {
+    const fresh = ids.filter((id) => !restoredMessageIds.has(id));
+    for (const id of fresh) restoredMessageIds.add(id);
+    return fresh;
+  },
   clearE2eeRejection: (roomId) =>
     set((s) => {
       const { [roomId]: _rejection, ...e2eeRejectionByRoom } = s.e2eeRejectionByRoom;

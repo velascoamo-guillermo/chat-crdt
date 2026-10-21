@@ -173,16 +173,20 @@ export function useSync(roomId: string) {
           // Read the cipher now, not at provider creation: it may have
           // resolved (or gained keys) since.
           const cipher = useChatStore.getState().roomCryptoByRoom[roomId]?.cipher ?? contentCipher;
+          const ours = retracted.filter((m) => m.userId === user.id);
+          if (ours.length === 0) return;
+          // Each refused message goes back to the composer once, even if it
+          // bounces again after an engine rebuild.
+          const fresh = new Set(useChatStore.getState().claimRestoredMessages(ours.map((m) => m.id)));
+          if (fresh.size === 0) return;
           const text = rejectedDraftText(
-            retracted,
+            ours.filter((m) => fresh.has(m.id)),
             user.id,
             cipher ? (content, ad) => cipher.decrypt(content, ad) : null,
           );
-          // Notify even when nothing can be restored (someone else's or
-          // undecryptable): the user still has to know it wasn't sent.
-          if (retracted.some((m) => m.userId === user.id)) {
-            useChatStore.getState().noteE2eeRejection(roomId, text ?? '');
-          }
+          // Notify even when nothing can be restored (undecryptable): the
+          // user still has to know it wasn't sent.
+          useChatStore.getState().noteE2eeRejection(roomId, text ?? '');
         },
         // T10: the server refused something in our state we can't retract
         // (another account's leftovers, an item with no id). The provider has

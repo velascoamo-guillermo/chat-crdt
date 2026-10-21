@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs the full ticket #13 offline-first Maestro E2E story end to end:
 #
-#   start server -> provision test users -> create this run's room e2e-<RUN_ID>
-#   (both users in it) and prune old e2e-* rooms
+#   restart server -> provision test users + create this run's room e2e-<RUN_ID>
+#   (both users in it) -> prune old e2e-* rooms
 #   -> [part 1] login + assert "connected" + send 1 ONLINE message
 #   -> stop server ("go offline")
 #   -> [part 2] assert "disconnected" + send 2 offline messages + kill/relaunch app
@@ -139,14 +139,15 @@ trap cleanup EXIT
 echo "==> Building @chat-crdt/sync-engine (dist/ is gitignored — client B imports it; the app bundle is already built)"
 (cd "$ROOT_DIR/packages/sync-engine" && bun run build)
 
-echo "==> Starting apps/server (no-op if it's already up)"
+# Restart apps/server so every run starts from fresh in-memory state, including
+# the /auth throttler (5 requests/min per IP). A run makes 4 auth calls: two in
+# e2e-room.ts, the app's login, client B's login (after part 2's restart).
+echo "==> Restarting apps/server"
+"$SERVER_CTL" stop
 "$SERVER_CTL" start
 
-echo "==> Provisioning test users (maestro-a@e2e.test / maestro-b@e2e.test)"
-bun "$SCRIPT_DIR/scripts/setup-users.ts"
-
 E2E_ROOM="e2e-$RUN_ID"
-echo "==> Creating this run's room #$E2E_ROOM (maestro-a admin, maestro-b member)"
+echo "==> Provisioning maestro-a/maestro-b and this run's room #$E2E_ROOM (a admin, b member)"
 bun "$SCRIPT_DIR/scripts/e2e-room.ts" "$E2E_ROOM"
 "$SERVER_CTL" prune-e2e-rooms "${E2E_ROOMS_KEEP:-5}"
 

@@ -1,10 +1,17 @@
 #!/usr/bin/env bun
 /**
- * Provisions a shared room for the Maestro multi-user E2E flows.
+ * Provisions the two Maestro test users and a shared room for the multi-user E2E flows.
  *
- * maestro-a creates the room (becoming its admin), or re-joins it if it already
- * exists from a previous run. maestro-b then joins it. Users must already exist:
- * run setup-users.ts first.
+ * Users: maestro-a (MaestroA) and maestro-b (MaestroB), password password123. Each one
+ * logs in first and is registered only if login returns 401 (no such user). This
+ * script therefore replaces setup-users.ts in run.sh.
+ *
+ * Room: maestro-a creates the room (becoming its admin), or re-joins it if it already
+ * exists from a previous run. maestro-b then joins it.
+ *
+ * Auth budget: the server throttles /auth/* to 5 requests/min per IP. A run makes
+ * 2 auth requests in the common case (one login per user); a first run with new
+ * users makes up to 4 (login + register each).
  *
  * Usage: bun apps/mobile/.maestro/scripts/e2e-room.ts <room-name>
  *        node --experimental-strip-types apps/mobile/.maestro/scripts/e2e-room.ts <room-name>
@@ -16,6 +23,8 @@ const API_URL = process.env.API_URL ?? "http://localhost:3001";
 const PASSWORD = "password123";
 const USER_A = "maestro-a@e2e.test";
 const USER_B = "maestro-b@e2e.test";
+const NAME_A = "MaestroA";
+const NAME_B = "MaestroB";
 
 /** Mirrors apps/server/src/rooms/dto/create-room.dto.ts. */
 const ROOM_NAME_PATTERN = /^[a-z0-9-]+$/;
@@ -72,26 +81,50 @@ async function send(
   return { status: res.status, ok: res.ok, body: await res.text() };
 }
 
-async function login(email: string): Promise<string> {
-  const res = await send("/auth/login", {
+function failAuth(email: string, path: string, res: HttpResult): never {
+  fail(
+    `${path} for ${email} failed (${res.status}): ${res.body}. ` +
+      `Hint: auth is throttled to 5/min per IP.`,
+  );
+}
+
+/**
+ * Returns a token for the account. Logs in first; registers only on 401.
+ * Register returns a token too, so a fresh user costs no extra login.
+ */
+async function authenticate(email: string, username: string): Promise<string> {
+  const login = await send("/auth/login", {
     method: "POST",
     json: { email, password: PASSWORD },
   });
-  if (!res.ok) {
+  if (login.ok) {
+    return (JSON.parse(login.body) as AuthResponse).token;
+  }
+  if (login.status !== 401) {
+    failAuth(email, "/auth/login", login);
+  }
+
+  const register = await send("/auth/register", {
+    method: "POST",
+    json: { email, username, password: PASSWORD },
+  });
+  if (register.ok) {
+    console.log(`[e2e-room] registered ${email}`);
+    return (JSON.parse(register.body) as AuthResponse).token;
+  }
+  if (register.status === 409) {
     fail(
-      `login failed for ${email} (${res.status}): ${res.body}. ` +
-        `Run apps/mobile/.maestro/scripts/setup-users.ts first.`,
+      `${email} exists but login returned 401: password may have drifted from the fixture value`,
     );
   }
-  const data = JSON.parse(res.body) as AuthResponse;
-  return data.token;
+  failAuth(email, "/auth/register", register);
 }
 
 async function main(): Promise<void> {
   const roomName = validateRoomName(process.argv[2]);
 
-  const tokenA = await login(USER_A);
-  const tokenB = await login(USER_B);
+  const tokenA = await authenticate(USER_A, NAME_A);
+  const tokenB = await authenticate(USER_B, NAME_B);
 
   const created = await send("/rooms", {
     method: "POST",

@@ -8,7 +8,9 @@ import * as Y from 'yjs';
  * "E2E1 …" prose (or a malicious one's) through as if it were ciphertext.
  */
 const E2EE_PREFIX = 'E2E1';
-const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+// Standard or URL-safe alphabet, padding optional: the app's libsodium
+// to_base64 defaults to URLSAFE_NO_PADDING.
+const BASE64 = /^[A-Za-z0-9+/_-]+={0,2}$/;
 
 export type EnvelopeGateResult =
   | { ok: true }

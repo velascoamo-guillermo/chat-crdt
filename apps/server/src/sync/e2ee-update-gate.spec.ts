@@ -29,6 +29,15 @@ describe('checkEnvelopedUpdate (T10: no plaintext message inserts into an E2EE r
     expect(isOk(update)).toBe(true);
   });
 
+  it('accepts the envelope the app really sends: libsodium URL-safe, unpadded base64', () => {
+    // sodium.to_base64 defaults to URLSAFE_NO_PADDING ('-', '_', no '=').
+    const real =
+      'E2E1{"v":1,"keyId":1,"nonce":"q-9_zXk0aB2cD3eF4gH5iJ6kL7mN8oP9","ciphertext":"Zm9v-YmFy_YmF6LXF1eA"}';
+    const doc = new Y.Doc();
+    const update = updateOf(doc, (d) => d.getArray('messages').push([msg('m1', real)]));
+    expect(isOk(update)).toBe(true);
+  });
+
   it('rejects an update that appends a plaintext message', () => {
     const doc = new Y.Doc();
     const update = updateOf(doc, (d) => d.getArray('messages').push([msg('m1', 'hello in the clear')]));

@@ -39,6 +39,7 @@ export const Composer = memo(function Composer({ onSend, sendTyping, disabled = 
   useEffect(() => {
     if (!restoreDraft || restoredSeq.current === restoreDraft.seq) return;
     restoredSeq.current = restoreDraft.seq;
+    if (!restoreDraft.text) return;
     const current = draft.value.trim();
     draft.value = current ? `${current}\n${restoreDraft.text}` : restoreDraft.text;
   }, [restoreDraft, draft]);

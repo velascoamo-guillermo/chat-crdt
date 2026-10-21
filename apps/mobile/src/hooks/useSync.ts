@@ -10,6 +10,7 @@ import { useChatStore } from '../store/chat.store';
 import { useRoomsStore } from '../store/rooms.store';
 import { useE2eeCipher } from './useE2ee';
 import { E2EE_PREFIX } from '../crypto/e2eeEnvelope';
+import { rejectedDraftText } from '../crypto/rejectedDraft';
 
 const WS_URL = process.env.EXPO_PUBLIC_WS_URL ?? 'ws://localhost:3001/sync';
 
@@ -152,8 +153,16 @@ export function useSync(roomId: string) {
         // and hand our own text back to the composer.
         onE2eeRejected: ({ keyId, retracted }) => {
           useRoomsStore.getState().noteRoomEpoch(roomId, keyId);
-          const mine = retracted.filter((m) => m.userId === user.id).map((m) => m.content);
-          if (mine.length > 0) useChatStore.getState().noteE2eeRejection(roomId, mine.join('\n'));
+          const text = rejectedDraftText(
+            retracted,
+            user.id,
+            contentCipher ? (content, ad) => contentCipher.decrypt(content, ad) : null,
+          );
+          // Notify even when nothing can be restored (someone else's or
+          // undecryptable): the user still has to know it wasn't sent.
+          if (retracted.some((m) => m.userId === user.id)) {
+            useChatStore.getState().noteE2eeRejection(roomId, text ?? '');
+          }
         },
         onAuthError: (code) => {
           if (code === NOT_MEMBER_CLOSE_CODE) {

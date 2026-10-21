@@ -6,6 +6,19 @@ has the full story and prerequisites (maestro, bun, node >= 22.6, docker infra, 
 The flows run against an **e2e build**: release configuration, JS bundle embedded,
 QA readout on, API at `localhost:3001`. No Metro at run time.
 
+## Devices: headless only
+
+Maestro runs belong on the dedicated headless e2e devices, never on a simulator
+or emulator you use by hand:
+
+- iOS: "E2E iPhone 17", booted with `xcrun simctl boot <udid>` (no Simulator window).
+- Android: AVD `E2E_Pixel9_36`, started with `emulator -avd E2E_Pixel9_36 -no-window`.
+
+They have no logged-in app of their own. Any other running, logged-in chatcrdt
+joins #general on launch and pushes its old doc back into the room `run.sh` just
+reset, so close the app on every other device before a run. `build-e2e.sh ios`
+installs with `simctl` and never opens Simulator.app.
+
 ## Build once per native or JS change
 
 ```sh
@@ -20,7 +33,8 @@ and `CHATCRDT_E2E_BUILD=<per-run token>`, which it also writes to
 e2e when the two match (`config/e2eBuildToken.js`), so a `CHATCRDT_E2E_BUILD` in a
 `.env` can't unlock the readout or the cleartext config. It then builds and installs:
 
-- iOS: `expo run:ios --configuration Release --no-bundler`. ATS already allows
+- iOS: `xcodebuild -configuration Release` for the device, then
+  `xcrun simctl install` (no launch, no Simulator window). ATS already allows
   localhost (`NSAllowsLocalNetworking`).
 - Android: `expo prebuild` (the `config/withE2eLocalhostCleartext.js` plugin
   adds a release-only network security config, cleartext for localhost,

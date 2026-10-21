@@ -34,6 +34,13 @@
 #     No Metro needed. The preflight below refuses a debug/dev-client build and a
 #     release build without the QA readout, before it touches the server or room.
 #
+# Devices: run Maestro only on the dedicated headless e2e devices, iOS
+# "E2E iPhone 17" (booted with `xcrun simctl boot`, no Simulator window) and
+# Android AVD E2E_Pixel9_36 (`emulator -avd E2E_Pixel9_36 -no-window`). They
+# have no logged-in app of their own. Any other running, logged-in chatcrdt
+# joins #general on launch and pushes its old doc back into the reset room, so
+# close the app on every other simulator/emulator before a run.
+#
 # Usage:
 #   apps/mobile/.maestro/run.sh
 #   DEVICE_UDID=<simulator-udid|adb-serial> apps/mobile/.maestro/run.sh
@@ -105,7 +112,8 @@ if [ "$IS_ANDROID" = 1 ]; then
     not_e2e_build "a debug build"
   fi
   APK_COPY="$(mktemp -t chatcrdt-e2e-apk)"
-  adb -s "$DEVICE_UDID" pull "$APK_PATH" "$APK_COPY" >/dev/null
+  adb -s "$DEVICE_UDID" pull "$APK_PATH" "$APK_COPY" >/dev/null \
+    || not_e2e_build "unreadable (adb pull of the installed APK failed; retry)"
   READOUT_HITS="$(unzip -p "$APK_COPY" assets/index.android.bundle | LC_ALL=C grep -a -c "$QA_READOUT_MARKER" || true)"
   rm -f "$APK_COPY"
   [ "${READOUT_HITS:-0}" -gt 0 ] || not_e2e_build "a release build without the QA readout"

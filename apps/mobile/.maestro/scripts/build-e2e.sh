@@ -6,6 +6,9 @@
 #   apps/mobile/.maestro/scripts/build-e2e.sh ios <simulator-udid>
 #   apps/mobile/.maestro/scripts/build-e2e.sh android <adb-serial>
 #
+# Use the headless e2e devices (see run.sh). The iOS path never opens
+# Simulator.app and doesn't launch the app.
+#
 # Rebuild after any native or JS change; run.sh only launches what is installed.
 # The env below is the whole config. EXPO_NO_DOTENV keeps Expo CLI from loading
 # apps/mobile/.env*, and CHATCRDT_E2E_BUILD is a per-run token (see
@@ -61,8 +64,17 @@ trap cleanup EXIT
 echo "$E2E_TOKEN" > "$E2E_TOKEN_FILE"
 
 if [ "$PLATFORM" = "ios" ]; then
+  # xcodebuild + simctl install, not `expo run:ios`: that launches the app and
+  # opens Simulator.app when no simulator UI is running, and e2e devices stay
+  # headless (run.sh launches the app through Maestro).
   echo "==> iOS Release build for $DEVICE"
-  bunx expo run:ios --configuration Release --no-bundler --device "$DEVICE"
+  XCODE_ARGS=(-workspace ios/chatcrdt.xcworkspace -scheme chatcrdt -configuration Release
+    -destination "id=$DEVICE")
+  xcodebuild "${XCODE_ARGS[@]}" -quiet build
+  PRODUCTS_DIR="$(xcodebuild "${XCODE_ARGS[@]}" -showBuildSettings 2>/dev/null \
+    | awk -F' = ' '/^ *BUILT_PRODUCTS_DIR = / { print $2; exit }')"
+  echo "==> Installing $PRODUCTS_DIR/chatcrdt.app on $DEVICE"
+  xcrun simctl install "$DEVICE" "$PRODUCTS_DIR/chatcrdt.app"
 else
   echo "==> Android prebuild (e2e network config)"
   bunx expo prebuild --platform android --no-install

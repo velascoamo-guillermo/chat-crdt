@@ -2,13 +2,18 @@
 //
 // EXPO_PUBLIC_QA_READOUT=1 is inlined into the JS bundle at build time. Only
 // the Maestro e2e build (.maestro/scripts/build-e2e.sh) may ship it, and that
-// build says so with CHATCRDT_E2E_BUILD=1. Any other production bundle with the
-// flag set must fail, not ship the readout.
+// build proves it with its per-run token (config/e2eBuildToken.js). Any other
+// production bundle with the flag set must fail, not ship the readout.
 //
-// metro.config.js calls this. Every release bundle goes through Metro in-process
-// via Expo CLI: `export:embed --dev false` (Xcode's bundle phase, the RN Gradle
-// plugin) or `expo export` (production unless --dev). Plain CJS, no imports:
-// metro.config.js requires it and bun tests import it.
+// metro.config.js calls this whenever Metro bundles: `export:embed --dev false`
+// (Xcode's bundle phase, the RN Gradle plugin) or `expo export` (production
+// unless --dev). It can't catch a bundle that is never rebuilt: Gradle's
+// incremental bundle task reuses its last output, so config/
+// withQaReadoutBundleCheck.js covers that on Android. Plain CJS: metro.config.js
+// requires it and bun tests import it.
+
+/* eslint-disable @typescript-eslint/no-require-imports */
+const { isE2eBuild } = require('./e2eBuildToken');
 
 /** True when argv is an Expo CLI production bundle command. */
 function isProductionBundle(argv) {
@@ -32,14 +37,18 @@ function isProductionBundle(argv) {
 
 /**
  * The reason this bundle must not be built, or null when it may.
- * @param {{ argv: readonly string[]; env: Readonly<Record<string, string | undefined>> }} input
+ * @param {{
+ *   argv: readonly string[];
+ *   env: Readonly<Record<string, string | undefined>>;
+ *   e2eToken?: string | null;
+ * }} input
  * @returns {string | null}
  */
-function qaReadoutBuildError({ argv, env }) {
+function qaReadoutBuildError({ argv, env, e2eToken }) {
   if (env.EXPO_PUBLIC_QA_READOUT !== '1') {
     return null;
   }
-  if (env.CHATCRDT_E2E_BUILD === '1') {
+  if (isE2eBuild(env, e2eToken)) {
     return null;
   }
   if (!isProductionBundle(argv)) {
@@ -48,7 +57,7 @@ function qaReadoutBuildError({ argv, env }) {
   return (
     'EXPO_PUBLIC_QA_READOUT=1 is set for a production bundle. The QA readout ' +
     'only ships in the Maestro e2e build (apps/mobile/.maestro/scripts/build-e2e.sh, ' +
-    'which sets CHATCRDT_E2E_BUILD=1). Unset EXPO_PUBLIC_QA_READOUT and rebuild.'
+    'which sets a per-run CHATCRDT_E2E_BUILD token). Unset EXPO_PUBLIC_QA_READOUT and rebuild.'
   );
 }
 

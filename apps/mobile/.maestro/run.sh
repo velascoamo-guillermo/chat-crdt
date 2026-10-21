@@ -31,13 +31,13 @@
 #     change, then run this as often as you like:
 #       apps/mobile/.maestro/scripts/build-e2e.sh ios <simulator-udid>
 #       apps/mobile/.maestro/scripts/build-e2e.sh android <adb-serial>
-#     No Metro needed. The preflight below refuses a debug/dev-client build, and
-#     flow 01 fails with a labelled step if the QA readout isn't in the build.
+#     No Metro needed. The preflight below refuses a debug/dev-client build and a
+#     release build without the QA readout, before it touches the server or room.
 #
 # Usage:
 #   apps/mobile/.maestro/run.sh
-#   DEVICE_UDID=<simulator-udid|emulator-serial> apps/mobile/.maestro/run.sh
-#     (needed if more than one simulator/emulator is booted)
+#   DEVICE_UDID=<simulator-udid|adb-serial> apps/mobile/.maestro/run.sh
+#     (needed for Android, and if more than one simulator is booted)
 #
 # Everything below uses the default server port :3001 and the shared
 # infra/docker-compose.yml postgres.
@@ -59,7 +59,6 @@ cleanup() {
   "$SERVER_CTL" start >/dev/null 2>&1 || true
   exit $exit_code
 }
-trap cleanup EXIT
 
 RUN_ID="${RUN_ID:-$(date +%s)}"
 export RUN_ID
@@ -73,9 +72,19 @@ if [ -n "${DEVICE_UDID:-}" ]; then
 fi
 
 APP_ID="com.chatcrdt.app"
+# What build-e2e.sh's bundle carries and no other bundle can (see
+# config/e2eBuildToken.js QA_READOUT_BUNDLE_MARKER).
+QA_READOUT_MARKER="chatcrdt-qa-readout:1"
+
+# Android = any serial adb knows (emulator or physical device), else iOS.
+ADB_SERIALS="$(adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { print $1 }' || true)"
 IS_ANDROID=0
-if [[ "${DEVICE_UDID:-}" == emulator-* ]]; then
+if [ -n "${DEVICE_UDID:-}" ] && grep -qxF "$DEVICE_UDID" <<<"$ADB_SERIALS"; then
   IS_ANDROID=1
+elif [ -z "${DEVICE_UDID:-}" ] && [ -n "$ADB_SERIALS" ] \
+  && ! xcrun simctl list devices booted 2>/dev/null | grep -q '(Booted)'; then
+  echo "==> Only an Android device is connected: set DEVICE_UDID=<adb-serial>." >&2
+  exit 1
 fi
 
 not_e2e_build() {
@@ -85,13 +94,21 @@ not_e2e_build() {
   exit 1
 }
 
-echo "==> Preflight: installed app must be the e2e build (embedded bundle, no Metro)"
+echo "==> Preflight: installed app must be the e2e build (embedded bundle with the QA readout, no Metro)"
 if [ "$IS_ANDROID" = 1 ]; then
-  adb -s "$DEVICE_UDID" shell pm path "$APP_ID" >/dev/null 2>&1 || not_e2e_build "not installed"
+  APK_PATH="$(adb -s "$DEVICE_UDID" shell pm path "$APP_ID" 2>/dev/null | sed -n 's/^package://p' | head -1 | tr -d '\r')"
+  [ -n "$APK_PATH" ] || not_e2e_build "not installed"
   # Release builds aren't debuggable; the debug/dev-client build loads JS from Metro.
-  if adb -s "$DEVICE_UDID" shell dumpsys package "$APP_ID" | grep -q 'pkgFlags=.*DEBUGGABLE'; then
+  # Captured first: `| grep -q` under pipefail can SIGPIPE adb and read a match as "no".
+  PKG_DUMP="$(adb -s "$DEVICE_UDID" shell dumpsys package "$APP_ID")"
+  if grep -q 'pkgFlags=.*DEBUGGABLE' <<<"$PKG_DUMP"; then
     not_e2e_build "a debug build"
   fi
+  APK_COPY="$(mktemp -t chatcrdt-e2e-apk)"
+  adb -s "$DEVICE_UDID" pull "$APK_PATH" "$APK_COPY" >/dev/null
+  READOUT_HITS="$(unzip -p "$APK_COPY" assets/index.android.bundle | LC_ALL=C grep -a -c "$QA_READOUT_MARKER" || true)"
+  rm -f "$APK_COPY"
+  [ "${READOUT_HITS:-0}" -gt 0 ] || not_e2e_build "a release build without the QA readout"
   # The release app reaches apps/server at localhost:3001 through this.
   adb -s "$DEVICE_UDID" reverse tcp:3001 tcp:3001 >/dev/null
 else
@@ -99,7 +116,13 @@ else
     || not_e2e_build "not installed"
   # Debug builds skip bundling (SKIP_BUNDLING) and load JS from Metro.
   [ -f "$APP_CONTAINER/main.jsbundle" ] || not_e2e_build "a debug build (no embedded main.jsbundle)"
+  LC_ALL=C grep -a -q "$QA_READOUT_MARKER" "$APP_CONTAINER/main.jsbundle" \
+    || not_e2e_build "a release build without the QA readout"
 fi
+
+# From here on, leave apps/server up however the run ends (see cleanup). Not
+# before: a failed preflight shouldn't start the server as a side effect.
+trap cleanup EXIT
 
 echo "==> Building @chat-crdt/sync-engine (dist/ is gitignored — client B imports it; the app bundle is already built)"
 (cd "$ROOT_DIR/packages/sync-engine" && bun run build)

@@ -13,7 +13,7 @@
 # only have come from op-sqlite's `chat.db` (SQLitePersistence in useSync.ts), not from
 # anything still warm in memory.
 #
-# RED-run finding: on a loaded dev machine (several simulators + Metro + docker infra
+# RED-run finding: on a loaded dev machine (several simulators + docker infra
 # + apps/server all running at once), the app can get evicted to the home screen
 # between the part 1 and part 2 `maestro test` invocations for reasons unrelated to
 # this feature (simulator memory pressure). The `launchApp: clearState: false` guard

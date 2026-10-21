@@ -1,9 +1,14 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 const { qaReadoutBuildError } = require('./config/qaReadoutGuard');
+const { readE2eBuildToken } = require('./config/e2eBuildToken');
 
 // Fail a production bundle that would ship the QA-only readout (see the guard).
-const qaReadoutError = qaReadoutBuildError({ argv: process.argv, env: process.env });
+const qaReadoutError = qaReadoutBuildError({
+  argv: process.argv,
+  env: process.env,
+  e2eToken: readE2eBuildToken(__dirname),
+});
 if (qaReadoutError) {
   throw new Error(qaReadoutError);
 }

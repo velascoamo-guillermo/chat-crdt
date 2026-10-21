@@ -9,3 +9,5 @@
 # expo-env.d.ts — intentionally committed so CI typecheck has Expo's ambient
 # `expo/types` reference without running the dev server. It is static.
 # @end expo-cli
+# per-run token of an e2e build in progress (.maestro/scripts/build-e2e.sh)
+.e2e-build-token

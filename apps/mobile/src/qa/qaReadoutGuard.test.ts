@@ -8,9 +8,10 @@ const releaseEmbed = [
   '--platform', 'ios', '--dev', 'false', '--minify', 'true',
 ];
 const QA = { EXPO_PUBLIC_QA_READOUT: '1' };
+const TOKEN = '3f2b9c1e-7a4d-4e8b-9c0f-1a2b3c4d5e6f';
 
 describe('qaReadoutBuildError', () => {
-  it('blocks a release bundle that has the QA flag but no e2e marker', () => {
+  it('blocks a release bundle that has the QA flag but no e2e token', () => {
     expect(qaReadoutBuildError({ argv: releaseEmbed, env: QA })).toContain(
       'EXPO_PUBLIC_QA_READOUT',
     );
@@ -26,9 +27,20 @@ describe('qaReadoutBuildError', () => {
     expect(qaReadoutBuildError({ argv, env: QA })).not.toBeNull();
   });
 
-  it('allows the flag in an explicit e2e build', () => {
+  it('allows the flag in the e2e build (env matches the per-run token)', () => {
+    const env = { ...QA, CHATCRDT_E2E_BUILD: TOKEN };
+    expect(qaReadoutBuildError({ argv: releaseEmbed, env, e2eToken: TOKEN })).toBeNull();
+  });
+
+  it('blocks a static CHATCRDT_E2E_BUILD (e.g. from .env) that does not match the token', () => {
     const env = { ...QA, CHATCRDT_E2E_BUILD: '1' };
-    expect(qaReadoutBuildError({ argv: releaseEmbed, env })).toBeNull();
+    expect(qaReadoutBuildError({ argv: releaseEmbed, env })).not.toBeNull();
+    expect(qaReadoutBuildError({ argv: releaseEmbed, env, e2eToken: TOKEN })).not.toBeNull();
+  });
+
+  it('treats `export:embed` without --dev as a dev bundle (its default)', () => {
+    const argv = ['node', 'cli', 'export:embed', '--platform', 'android'];
+    expect(qaReadoutBuildError({ argv, env: QA })).toBeNull();
   });
 
   it('allows release bundles without the flag', () => {

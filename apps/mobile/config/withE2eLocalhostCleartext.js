@@ -2,8 +2,8 @@
 // over plain http on the test hosts, and nothing else.
 //
 // Release builds block cleartext HTTP; the e2e build talks to
-// http://localhost:3001 (adb reverse) or 10.0.2.2. With CHATCRDT_E2E_BUILD=1 at
-// prebuild, this writes a release-source-set network security config that
+// http://localhost:3001 (adb reverse) or 10.0.2.2. In the e2e build's prebuild
+// (config/e2eBuildToken.js), this writes a release-source-set network security config that
 // permits cleartext for those hosts only (the base config stays cleartext-off).
 // Without it, prebuild removes those files again, and build-e2e.sh deletes them
 // right after its build, so a production assembleRelease never picks them up.
@@ -12,6 +12,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 const fs = require('fs');
 const path = require('path');
+const { isE2eBuild, readE2eBuildToken } = require('./e2eBuildToken');
 
 const MARKER = 'chatcrdt-e2e-localhost-cleartext';
 const NSC_NAME = 'e2e_network_security_config';
@@ -42,13 +43,14 @@ const isOurs = (file) => fs.readFileSync(file, 'utf8').includes(MARKER);
  * `appDir` (android/app).
  * @param {string} appDir
  * @param {Readonly<Record<string, string | undefined>>} env
+ * @param {string | null} e2eToken
  * @returns {'written' | 'removed' | 'untouched'}
  */
-function syncE2eReleaseFiles(appDir, env) {
+function syncE2eReleaseFiles(appDir, env, e2eToken) {
   const manifest = path.join(appDir, 'src/release/AndroidManifest.xml');
   const nsc = path.join(appDir, `src/release/res/xml/${NSC_NAME}.xml`);
 
-  if (env.CHATCRDT_E2E_BUILD === '1') {
+  if (isE2eBuild(env, e2eToken)) {
     if (fs.existsSync(manifest) && !isOurs(manifest)) {
       throw new Error(
         `${manifest} exists and was not written by withE2eLocalhostCleartext. ` +
@@ -77,7 +79,12 @@ const withE2eLocalhostCleartext = (config) => {
   return withDangerousMod(config, [
     'android',
     (modConfig) => {
-      syncE2eReleaseFiles(path.join(modConfig.modRequest.platformProjectRoot, 'app'), process.env);
+      const { platformProjectRoot, projectRoot } = modConfig.modRequest;
+      syncE2eReleaseFiles(
+        path.join(platformProjectRoot, 'app'),
+        process.env,
+        readE2eBuildToken(projectRoot),
+      );
       return modConfig;
     },
   ]);

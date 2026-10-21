@@ -59,8 +59,13 @@ type NativeScroller = { scrollToEnd: (options?: { animated?: boolean }) => void 
 // Off unless the build sets EXPO_PUBLIC_QA_READOUT=1, which the e2e build
 // (.maestro/scripts/build-e2e.sh, release config) does. A production bundle
 // with the flag fails to build: config/qaReadoutGuard.js, run from
-// metro.config.js.
+// metro.config.js, and on Android config/withQaReadoutBundleCheck.js.
 const QA_READOUT_ENABLED = isQaReadoutEnabled(process.env.EXPO_PUBLIC_QA_READOUT);
+// The minifier folds this to "chatcrdt-qa-readout:1" only when the flag is
+// inlined, so that string marks an e2e bundle for the Android release check and
+// run.sh's preflight. Keep it a template on the env var: spelling the result
+// out here would put it in every bundle.
+const QA_READOUT_BUILD_TAG = `chatcrdt-qa-readout:${process.env.EXPO_PUBLIC_QA_READOUT}`;
 
 // ADR-010, Key-rotation trigger list item 0 (enablement): no special actor
 // or endpoint beyond the same atomic claim any member can call — in
@@ -443,7 +448,11 @@ export default function ChatScreen() {
               <Text testID="chat-order-digest" style={styles.debugReadout}>
                 {computeOrderDigest(messages.map((m) => m.content))}
               </Text>
-              <Text testID="chat-ws-status" style={styles.debugReadout}>
+              <Text
+                testID="chat-ws-status"
+                nativeID={QA_READOUT_BUILD_TAG}
+                style={styles.debugReadout}
+              >
                 {wsStatus}
               </Text>
             </>

@@ -10,6 +10,12 @@
  * server log should show "Rejected sync update with a non-E2E1 message in
  * E2EE room ..." and e2ee_rejected_updates_total should tick.
  *
+ * Also checks recovery (T10 review I1): right after the plaintext, the forger
+ * queues a well-formed envelope stand-in (random bytes, not decryptable —
+ * real clients show it as unreadable). The server refuses the plaintext, the
+ * forger must get an E2EE_REJECTED naming it and retract it, and the
+ * stand-in must still land instead of being stuck behind the refused item.
+ *
  * Runs under node, not bun — see client-b-offline-inject.ts for why.
  *
  * Usage: ROOM=<e2ee room> EMAIL=<member email> PASSWORD=<pw> \
@@ -18,7 +24,8 @@
  */
 
 import NodeWebSocket from "ws";
-import { SyncEngine, WebSocketProvider } from "@chat-crdt/sync-engine";
+import { randomBytes } from "node:crypto";
+import { SyncEngine, WebSocketProvider, type WebSocketProviderConfig } from "@chat-crdt/sync-engine";
 
 (globalThis as unknown as { WebSocket: unknown }).WebSocket = NodeWebSocket;
 
@@ -65,11 +72,16 @@ async function roomEpoch(token: string): Promise<number> {
   return room.currentKeyId;
 }
 
-function connect(engine: SyncEngine, auth: AuthResponse): Promise<WebSocketProvider> {
+function connect(
+  engine: SyncEngine,
+  auth: AuthResponse,
+  extra: Partial<WebSocketProviderConfig> = {},
+): Promise<WebSocketProvider> {
   const provider = new WebSocketProvider(engine, {
     url: `${WS_URL}?room=${ROOM}`,
     token: auth.token,
     username: auth.user.username,
+    ...extra,
   });
   return new Promise((resolve, reject) => {
     const poll = setInterval(() => {
@@ -99,10 +111,20 @@ async function main(): Promise<void> {
   }
 
   const marker = `T10-FORGE-${Date.now()}`;
+  const standIn = `E2E1${JSON.stringify({
+    v: 1,
+    keyId: epoch,
+    nonce: randomBytes(24).toString("base64"),
+    ciphertext: randomBytes(32).toString("base64"),
+  })}`;
+  const retracted: string[] = [];
   const forger = new SyncEngine({ roomId: ROOM!, userId: auth.user.id, username: auth.user.username });
-  const forgerProvider = await connect(forger, auth);
+  const forgerProvider = await connect(forger, auth, {
+    onE2eeRejected: ({ retracted: msgs }) => retracted.push(...msgs.map((m) => m.content)),
+  });
   forger.sendMessage(marker); // no contentCipher -> plaintext on the wire
-  console.log(`[forge] sent plaintext marker into E2EE room "${ROOM}" (epoch ${epoch})`);
+  forger.sendMessage(standIn); // queued right behind it (next clock)
+  console.log(`[forge] sent plaintext marker + envelope stand-in into E2EE room "${ROOM}" (epoch ${epoch})`);
   await sleep(SETTLE_MS);
   forgerProvider.destroy();
   forger.destroy();
@@ -110,16 +132,20 @@ async function main(): Promise<void> {
   const observer = new SyncEngine({ roomId: ROOM!, userId: auth.user.id, username: auth.user.username });
   const observerProvider = await connect(observer, auth);
   await sleep(SETTLE_MS);
-  const leaked = observer.getMessages().some((m) => m.content === marker);
+  const contents = observer.getMessages().map((m) => m.content);
   observerProvider.destroy();
   observer.destroy();
 
-  if (leaked) {
-    console.error("[forge] FAIL — server accepted the plaintext message");
+  const failures: string[] = [];
+  if (contents.includes(marker)) failures.push("server accepted the plaintext message");
+  if (!retracted.includes(marker)) failures.push("no E2EE_REJECTED naming the plaintext reached the sender");
+  if (!contents.includes(standIn)) failures.push("the envelope queued behind the plaintext never landed (sender wedged)");
+  if (failures.length > 0) {
+    for (const f of failures) console.error(`[forge] FAIL — ${f}`);
     process.exitCode = 1;
     return;
   }
-  console.log("[forge] PASS — server rejected the plaintext message (check server log for the rejection)");
+  console.log("[forge] PASS — plaintext rejected and retracted; the queued envelope landed");
 }
 
 main().catch((err: unknown) => {

@@ -17,9 +17,9 @@ function deferred<T>() {
 }
 
 function harness() {
-  const fetches: Array<ReturnType<typeof deferred<RoomsFetchResult<Room>>>> = [];
-  const states: Array<[string, RoomRefreshState | undefined]> = [];
-  const timers: Array<{ fn: () => void; ms: number; cleared: boolean }> = [];
+  const fetches: ReturnType<typeof deferred<RoomsFetchResult<Room>>>[] = [];
+  const states: [string, RoomRefreshState | undefined][] = [];
+  const timers: { fn: () => void; ms: number; cleared: boolean }[] = [];
   const applied: Room[][] = [];
   const everE2ee: string[] = [];
   let socketUp = false;

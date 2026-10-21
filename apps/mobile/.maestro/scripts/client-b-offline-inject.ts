@@ -49,7 +49,8 @@
  *
  * Usage: RUN_ID=<id> node --experimental-strip-types \
  *          apps/mobile/.maestro/scripts/client-b-offline-inject.ts
- * Env:   API_URL (default http://localhost:3001), WS_URL (default ws://localhost:3001/sync)
+ * Env:   E2E_ROOM (the run's room, e2e-<RUN_ID>; run.sh sets it), API_URL (default
+ *        http://localhost:3001), WS_URL (default ws://localhost:3001/sync)
  */
 
 import NodeWebSocket from "ws";
@@ -62,13 +63,20 @@ import { computeOrderDigest } from "../../src/utils/orderDigest.ts";
 
 const API_URL = process.env.API_URL ?? "http://localhost:3001";
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3001/sync";
-const ROOM_ID = "default";
+// The run's own room (run.sh creates e2e-<RUN_ID> and adds both users), so no
+// other client's old history can land in it.
+const ROOM_ID = process.env.E2E_ROOM ?? "";
 const RUN_ID = process.env.RUN_ID;
 const CONNECT_TIMEOUT_MS = 15_000;
 // Upper bound while polling for A's messages to arrive post-handshake — normally
 // settles in well under a second locally; generous for a loaded CI/dev machine.
 const SETTLE_TIMEOUT_MS = 8_000;
 const SETTLE_POLL_MS = 150;
+
+if (!ROOM_ID) {
+  console.error("[client-b] E2E_ROOM env var is required (run.sh sets it)");
+  process.exit(1);
+}
 
 if (!RUN_ID) {
   console.error("[client-b] RUN_ID env var is required");

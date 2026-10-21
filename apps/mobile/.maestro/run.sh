@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Runs the full ticket #13 offline-first Maestro E2E story end to end:
 #
-#   build @chat-crdt/sync-engine -> reset "default" room -> start server
-#   -> provision test users
+#   start server -> provision test users -> create this run's room e2e-<RUN_ID>
+#   (both users in it) and prune old e2e-* rooms
 #   -> [part 1] login + assert "connected" + send 1 ONLINE message
 #   -> stop server ("go offline")
 #   -> [part 2] assert "disconnected" + send 2 offline messages + kill/relaunch app
@@ -13,10 +13,10 @@
 #   -> [part 3] assert device A shows all 5 messages, converged, no duplicates, AND in
 #      the same order as client B's independently-computed digest
 #
-# NOTE: these flows are not standalone-reusable in isolation without this script's
-# reset-room step — running 01/02/03 directly with `maestro test` against a room that
-# already has history from a previous run will fail the exact-count and order-digest
-# assertions in part 3 (they're deliberately not "at least these 5 texts").
+# Each run gets its own room, e2e-<RUN_ID>, passed to the flows as ROOM and to
+# client B as E2E_ROOM. The flows open it with the chatcrdt://<room> deep link. The
+# exact-count and order-digest assertions in part 3 rely on that room being new, so
+# run 01/02/03 through this script, not directly with `maestro test`.
 #
 # Prerequisites — install/start these once, this script does NOT do it for you:
 #   - maestro CLI: https://maestro.mobile.dev (curl -Ls "https://get.maestro.mobile.dev" | bash)
@@ -37,9 +37,8 @@
 # Devices: run Maestro only on the dedicated headless e2e devices, iOS
 # "E2E iPhone 17" (booted with `xcrun simctl boot`, no Simulator window) and
 # Android AVD E2E_Pixel9_36 (`emulator -avd E2E_Pixel9_36 -no-window`). They
-# have no logged-in app of their own. Any other running, logged-in chatcrdt
-# joins #general on launch and pushes its old doc back into the reset room, so
-# close the app on every other simulator/emulator before a run.
+# have no logged-in app of their own. Other devices may stay logged in and open:
+# they auto-join #general, never this run's room, so they can't pollute it.
 #
 # Usage:
 #   apps/mobile/.maestro/run.sh
@@ -140,33 +139,25 @@ trap cleanup EXIT
 echo "==> Building @chat-crdt/sync-engine (dist/ is gitignored — client B imports it; the app bundle is already built)"
 (cd "$ROOT_DIR/packages/sync-engine" && bun run build)
 
-echo "==> Resetting 'default' room for a deterministic message count"
-# Terminate the app under test first: a still-running instance holds the old Yjs
-# doc in memory and would push it straight back into the freshly reset room when
-# the server restarts (flow 01's clearState relaunch comes too late). Any OTHER
-# device still in the room must be closed by hand for the same reason.
-if [ "$IS_ANDROID" = 1 ]; then
-  adb -s "$DEVICE_UDID" shell am force-stop "$APP_ID" || true
-else
-  xcrun simctl terminate "${DEVICE_UDID:-booted}" "$APP_ID" 2>/dev/null || true
-fi
-"$SERVER_CTL" stop
-"$SERVER_CTL" reset-room
-
-echo "==> Starting apps/server"
+echo "==> Starting apps/server (no-op if it's already up)"
 "$SERVER_CTL" start
 
 echo "==> Provisioning test users (maestro-a@e2e.test / maestro-b@e2e.test)"
 bun "$SCRIPT_DIR/scripts/setup-users.ts"
 
+E2E_ROOM="e2e-$RUN_ID"
+echo "==> Creating this run's room #$E2E_ROOM (maestro-a admin, maestro-b member)"
+bun "$SCRIPT_DIR/scripts/e2e-room.ts" "$E2E_ROOM"
+"$SERVER_CTL" prune-e2e-rooms "${E2E_ROOMS_KEEP:-5}"
+
 echo "==> [1/3] Login + send 1 online message"
-maestro test "${MAESTRO_DEVICE_ARGS[@]}" "$SCRIPT_DIR/01-login-and-online-message.yaml" -e RUN_ID="$RUN_ID"
+maestro test "${MAESTRO_DEVICE_ARGS[@]}" "$SCRIPT_DIR/01-login-and-online-message.yaml" -e RUN_ID="$RUN_ID" -e ROOM="$E2E_ROOM"
 
 echo "==> Going offline: stopping apps/server"
 "$SERVER_CTL" stop
 
 echo "==> [2/3] Send 2 offline messages + relaunch app (SQLite persistence check)"
-maestro test "${MAESTRO_DEVICE_ARGS[@]}" "$SCRIPT_DIR/02-offline-and-restart.yaml" -e RUN_ID="$RUN_ID"
+maestro test "${MAESTRO_DEVICE_ARGS[@]}" "$SCRIPT_DIR/02-offline-and-restart.yaml" -e RUN_ID="$RUN_ID" -e ROOM="$E2E_ROOM"
 
 echo "==> Restoring network: restarting apps/server"
 "$SERVER_CTL" start
@@ -176,7 +167,7 @@ echo "==> Headless client B: author 2 offline messages, connect once, sync up"
 # right after so the full transcript still ends up in this script's own output. A
 # non-zero exit from client-b-offline-inject.ts (e.g. its own convergence assertion
 # failing) fails this assignment under `set -e`, which aborts run.sh here.
-CLIENT_B_OUTPUT="$(RUN_ID="$RUN_ID" node --experimental-strip-types "$SCRIPT_DIR/scripts/client-b-offline-inject.ts")"
+CLIENT_B_OUTPUT="$(RUN_ID="$RUN_ID" E2E_ROOM="$E2E_ROOM" node --experimental-strip-types "$SCRIPT_DIR/scripts/client-b-offline-inject.ts")"
 echo "$CLIENT_B_OUTPUT"
 
 EXPECTED_ORDER="$(echo "$CLIENT_B_OUTPUT" | grep '^ORDER_DIGEST=' | tail -1 | cut -d'=' -f2)"
@@ -188,6 +179,6 @@ echo "==> Order digest from client B: $EXPECTED_ORDER"
 
 echo "==> [3/3] Verify convergence on device A (5 messages, no duplicates, matching order)"
 maestro test "${MAESTRO_DEVICE_ARGS[@]}" "$SCRIPT_DIR/03-verify-convergence.yaml" \
-  -e RUN_ID="$RUN_ID" -e EXPECTED_ORDER="$EXPECTED_ORDER"
+  -e RUN_ID="$RUN_ID" -e ROOM="$E2E_ROOM" -e EXPECTED_ORDER="$EXPECTED_ORDER"
 
-echo "==> All 3 Maestro flows passed for RUN_ID=$RUN_ID (order digest $EXPECTED_ORDER)"
+echo "==> All 3 Maestro flows passed for RUN_ID=$RUN_ID in #$E2E_ROOM (order digest $EXPECTED_ORDER)"

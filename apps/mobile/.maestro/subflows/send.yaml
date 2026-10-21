@@ -1,0 +1,20 @@
+# Sends TEXT from the composer and proves it was sent, not just typed.
+# - Before Send: the room is new, so TEXT can only be visible in the composer
+#   field. Waiting for it rules out the input race where inputText hadn't
+#   reached the field yet and Send fired on an empty composer.
+# - After Send: the bubble alone can't prove a send (the field would still show
+#   TEXT), so assert the room's message count (QA readout) reached COUNT.
+appId: com.chatcrdt.app
+---
+- tapOn: "Message…"
+- inputText: "${TEXT}"
+- extendedWaitUntil:
+    visible: "${TEXT}"
+    timeout: 5000
+- tapOn: "Up"
+- extendedWaitUntil:
+    visible:
+      id: "chat-message-count"
+      text: "${COUNT} msgs"
+    timeout: 10000
+- assertVisible: "${TEXT}"

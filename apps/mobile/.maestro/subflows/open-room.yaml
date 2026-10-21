@@ -1,0 +1,13 @@
+# Opens this run's room (ROOM = e2e-<RUN_ID>, created by run.sh) through the
+# chatcrdt://<room> deep link. The app lands in #general after login and after
+# every relaunch, so each flow calls this before touching the room.
+appId: com.chatcrdt.app
+---
+- openLink: "chatcrdt://${ROOM}"
+# iOS can ask before opening a custom-scheme link; locale-agnostic for en/es.
+- tapOn:
+    text: "(Open|Abrir)"
+    optional: true
+- extendedWaitUntil:
+    visible: "# ${ROOM}.*"
+    timeout: 15000

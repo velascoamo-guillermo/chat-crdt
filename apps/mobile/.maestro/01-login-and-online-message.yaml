@@ -71,13 +71,17 @@ appId: com.chatcrdt.app
     text: "(Not Now|Ahora no)"
     optional: true
 - assertVisible: "# general.*"
+# Login lands in #general; this run's messages go to its own room.
+- runFlow: subflows/open-room.yaml
 - assertVisible:
     id: "chat-ws-status"
     label: "QA readout present (needs the e2e build: .maestro/scripts/build-e2e.sh)"
 - extendedWaitUntil:
     visible: "connected"
     timeout: 15000
-- tapOn: "Message…"
-- inputText: "${RUN_ID}-A-online-1"
-- tapOn: "Up"
-- assertVisible: "${RUN_ID}-A-online-1"
+- assertVisible: "0 msgs"
+- runFlow:
+    file: subflows/send.yaml
+    env:
+      TEXT: "${RUN_ID}-A-online-1"
+      COUNT: "1"

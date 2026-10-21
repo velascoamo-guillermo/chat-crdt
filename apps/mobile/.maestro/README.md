@@ -33,7 +33,8 @@ and `CHATCRDT_E2E_BUILD=<per-run token>`, which it also writes to
 e2e when the two match (`config/e2eBuildToken.js`), so a `CHATCRDT_E2E_BUILD` in a
 `.env` can't unlock the readout or the cleartext config. It then builds and installs:
 
-- iOS: `xcodebuild -configuration Release` for the device, then
+- iOS: `expo prebuild --platform ios` + `pod install` (ios/ is generated and
+  gitignored), then `xcodebuild -configuration Release` for the device and
   `xcrun simctl install` (no launch, no Simulator window). ATS already allows
   localhost (`NSAllowsLocalNetworking`).
 - Android: `expo prebuild` (the `config/withE2eLocalhostCleartext.js` plugin

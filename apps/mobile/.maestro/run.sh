@@ -114,8 +114,13 @@ if [ "$IS_ANDROID" = 1 ]; then
   APK_COPY="$(mktemp -t chatcrdt-e2e-apk)"
   adb -s "$DEVICE_UDID" pull "$APK_PATH" "$APK_COPY" >/dev/null \
     || not_e2e_build "unreadable (adb pull of the installed APK failed; retry)"
-  READOUT_HITS="$(unzip -p "$APK_COPY" assets/index.android.bundle | LC_ALL=C grep -a -c "$QA_READOUT_MARKER" || true)"
-  rm -f "$APK_COPY"
+  APK_BUNDLE="$(mktemp -t chatcrdt-e2e-bundle)"
+  if ! unzip -p "$APK_COPY" assets/index.android.bundle > "$APK_BUNDLE"; then
+    rm -f "$APK_COPY" "$APK_BUNDLE"
+    not_e2e_build "unreadable (no assets/index.android.bundle in the pulled APK; retry)"
+  fi
+  READOUT_HITS="$(LC_ALL=C grep -a -c "$QA_READOUT_MARKER" "$APK_BUNDLE" || true)"
+  rm -f "$APK_COPY" "$APK_BUNDLE"
   [ "${READOUT_HITS:-0}" -gt 0 ] || not_e2e_build "a release build without the QA readout"
   # The release app reaches apps/server at localhost:3001 through this.
   adb -s "$DEVICE_UDID" reverse tcp:3001 tcp:3001 >/dev/null

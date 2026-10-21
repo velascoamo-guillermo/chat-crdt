@@ -48,16 +48,19 @@ cd "$MOBILE_DIR"
 # bundle task also re-bundles when the QA flag or token changes, and fails a
 # non-e2e release that carries the readout (config/withQaReadoutBundleCheck.js);
 # deleting the outputs here means neither of those has to be the only guard.
+# Every step tolerates failure (|| true): the trap runs under set -e, and one
+# failing step must not skip the deletes after it.
 cleanup() {
-  rm -f "$E2E_TOKEN_FILE"
+  rm -f "$E2E_TOKEN_FILE" || true
   if [ "$PLATFORM" = "android" ]; then
-    node -e "require('./config/withE2eLocalhostCleartext').syncE2eReleaseFiles('android/app', {}, null)"
+    node -e "require('./config/withE2eLocalhostCleartext').syncE2eReleaseFiles('android/app', {}, null)" \
+      || echo "==> WARNING: could not remove the e2e network config from android/app/src/release" >&2
     find android/app/src/release -type d -empty -delete 2>/dev/null || true
     local build="android/app/build"
     rm -rf "$build/generated/assets/react/release" "$build/generated/res/react/release" \
       "$build/generated/sourcemaps/react/release" "$build/intermediates/sourcemaps/react/release" \
       "$build/intermediates/assets/release" "$build/intermediates/compressed_assets/release" \
-      "$build/outputs/apk/release"
+      "$build/outputs/apk/release" || true
   fi
 }
 trap cleanup EXIT
@@ -66,7 +69,12 @@ echo "$E2E_TOKEN" > "$E2E_TOKEN_FILE"
 if [ "$PLATFORM" = "ios" ]; then
   # xcodebuild + simctl install, not `expo run:ios`: that launches the app and
   # opens Simulator.app when no simulator UI is running, and e2e devices stay
-  # headless (run.sh launches the app through Maestro).
+  # headless (run.sh launches the app through Maestro). ios/ is generated and
+  # gitignored, so prebuild + pod install first, like the Android path: a clean
+  # checkout has no workspace, and a native or app.json change needs a fresh one.
+  echo "==> iOS prebuild + pod install"
+  bunx expo prebuild --platform ios --no-install
+  (cd ios && pod install)
   echo "==> iOS Release build for $DEVICE"
   XCODE_ARGS=(-workspace ios/chatcrdt.xcworkspace -scheme chatcrdt -configuration Release
     -destination "id=$DEVICE")

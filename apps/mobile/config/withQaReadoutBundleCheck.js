@@ -22,6 +22,10 @@ const {
 const BEGIN = '// @chatcrdt-qa-readout-bundle-check begin (config/withQaReadoutBundleCheck.js)';
 const END = '// @chatcrdt-qa-readout-bundle-check end';
 
+// The doLast closure captures `bundleTask` (a Task). Gradle's configuration
+// cache rejects that: if org.gradle.configuration-cache is ever enabled, move
+// the check into a task-free closure (read the bundle path into a provider at
+// configuration time) or a dedicated task.
 const gradleBlock = () => `${BEGIN}
 def chatcrdtQaReadout = providers.environmentVariable("EXPO_PUBLIC_QA_READOUT").orElse("")
 def chatcrdtE2eBuild = providers.environmentVariable("CHATCRDT_E2E_BUILD").orElse("")

@@ -21,13 +21,13 @@ import {
   sendButtonVisual,
   type SendButtonVisual,
 } from "../chat/composerState";
+import { applyDraftRestore } from "../utils/draftRestore";
 
 // SF Symbol (iOS) → Material Symbol (Android); a bare SF name renders nothing on Android.
 const ICONS: Record<SendButtonVisual["icon"], { ios: SendButtonVisual["icon"]; android: number }> = {
   "arrow.up": { ios: "arrow.up", android: ArrowUp },
   "lock.fill": { ios: "lock.fill", android: Lock },
 };
-import { draftAfterRestore } from "../utils/draftRestore";
 
 interface Props {
   onSend: (content: string) => void;
@@ -69,17 +69,22 @@ export const Composer = memo(function Composer({
   const restoredSeq = useRef<number | null>(null);
 
   useEffect(() => {
-    const next = draftAfterRestore(draft.value, restoreDraft, restoredSeq.current);
-    if (!next) return;
-    restoredSeq.current = next.seq;
-    if (next.draft !== draft.value) draft.value = next.draft;
-    // A programmatic write doesn't fire onChangeText: sync hasText so the
-    // restored text enables Send and opens the card.
-    const active = next.draft.trim().length > 0;
-    if (active !== hasTextRef.current) {
-      hasTextRef.current = active;
-      setHasText(active);
-    }
+    const seq = applyDraftRestore(
+      {
+        getDraft: () => draft.value,
+        setDraft: (value) => {
+          draft.value = value;
+        },
+        hasText: () => hasTextRef.current,
+        setHasText: (active) => {
+          hasTextRef.current = active;
+          setHasText(active);
+        },
+      },
+      restoreDraft,
+      restoredSeq.current,
+    );
+    if (seq !== null) restoredSeq.current = seq;
   }, [restoreDraft, draft]);
 
   const handleChange = useCallback(

@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   Row,
   Button,
@@ -27,6 +27,7 @@ const ICONS: Record<SendButtonVisual["icon"], { ios: SendButtonVisual["icon"]; a
   "arrow.up": { ios: "arrow.up", android: ArrowUp },
   "lock.fill": { ios: "lock.fill", android: Lock },
 };
+import { draftAfterRestore } from "../utils/draftRestore";
 
 interface Props {
   onSend: (content: string) => void;
@@ -38,6 +39,9 @@ interface Props {
   disabled?: boolean;
   /** Room has E2EE enabled — shows the display-only `🔒 Encrypted` chip in the card. */
   encrypted?: boolean;
+  /** T10: text the server refused (plaintext into an E2EE room) to put back
+   * in the draft. Applied once per `seq`, appended to anything already typed. */
+  restoreDraft?: { text: string; seq: number };
 }
 
 const TYPING_THROTTLE_MS = 300;
@@ -48,6 +52,7 @@ export const Composer = memo(function Composer({
   sendTyping,
   disabled = false,
   encrypted = false,
+  restoreDraft,
 }: Props) {
   // Text lives in native state — keystrokes don't round-trip through JS or
   // re-render React. `draft.value` is read on demand when sending.
@@ -61,6 +66,21 @@ export const Composer = memo(function Composer({
   // Mirrors hasText so handleChange only calls setHasText on an actual flip.
   const hasTextRef = useRef(false);
   const [focused, setFocused] = useState(false);
+  const restoredSeq = useRef<number | null>(null);
+
+  useEffect(() => {
+    const next = draftAfterRestore(draft.value, restoreDraft, restoredSeq.current);
+    if (!next) return;
+    restoredSeq.current = next.seq;
+    if (next.draft !== draft.value) draft.value = next.draft;
+    // A programmatic write doesn't fire onChangeText: sync hasText so the
+    // restored text enables Send and opens the card.
+    const active = next.draft.trim().length > 0;
+    if (active !== hasTextRef.current) {
+      hasTextRef.current = active;
+      setHasText(active);
+    }
+  }, [restoreDraft, draft]);
 
   const handleChange = useCallback(
     (text: string) => {

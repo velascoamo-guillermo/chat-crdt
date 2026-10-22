@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import type { UserDto, AuthResponse } from '@chat-crdt/shared';
+import { useChatStore } from './chat.store';
 
 const API = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001';
 const TOKEN_KEY = 'auth_token';
@@ -44,7 +45,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const body = await res.json().catch(() => ({}));
       throw new Error((body as any).message ?? 'Login failed');
     }
-    const data: AuthResponse = await res.json();
+    const data = (await res.json()) as AuthResponse;
     await SecureStore.setItemAsync(TOKEN_KEY, JSON.stringify(data));
     set({ token: data.token, user: data.user });
   },
@@ -59,13 +60,16 @@ export const useAuthStore = create<AuthState>((set) => ({
       const body = await res.json().catch(() => ({}));
       throw new Error((body as any).message ?? 'Register failed');
     }
-    const data: AuthResponse = await res.json();
+    const data = (await res.json()) as AuthResponse;
     await SecureStore.setItemAsync(TOKEN_KEY, JSON.stringify(data));
     set({ token: data.token, user: data.user });
   },
 
   logout: async () => {
     await SecureStore.deleteItemAsync(TOKEN_KEY);
+    // T10: refused-text drafts are per account; local room docs are already
+    // scoped per user (useSync), so nothing else carries over.
+    useChatStore.getState().clearAllE2eeRejections();
     set({ token: null, user: null });
   },
 }));

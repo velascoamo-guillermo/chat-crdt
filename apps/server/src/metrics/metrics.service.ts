@@ -49,6 +49,12 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly e2eeRejectedUpdatesTotal = new Counter({
+    name: 'e2ee_rejected_updates_total',
+    help: 'Sync updates rejected for inserting a non-E2E1 message into an E2EE room (T10)',
+    registers: [this.registry],
+  });
+
   private readonly persistDuration = new Histogram({
     name: 'persist_duration_seconds',
     help: 'Duration of yjsState persistence to Postgres, in seconds',
@@ -91,6 +97,10 @@ export class MetricsService {
 
   incFanoutBytes(bytes: number, channel: FanoutChannel): void {
     this.fanoutBytesTotal.inc({ channel }, bytes);
+  }
+
+  incE2eeRejectedUpdates(): void {
+    this.e2eeRejectedUpdatesTotal.inc();
   }
 
   observePersistDurationSeconds(seconds: number): void {

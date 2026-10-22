@@ -241,6 +241,40 @@ describe('RoomKeysService', () => {
       expect(result).toEqual({ currentKeyId: 1 });
     });
 
+    // T10: the sync gateway gates plaintext per room on currentKeyId, so it
+    // must learn about an epoch claim as soon as it commits.
+    it('notifies epoch listeners with the room id and new epoch after a claim commits', async () => {
+      mockPrisma.roomMember.findUnique.mockResolvedValue({ roomId: 'room-1', userId: 'admin-1', role: 'admin' });
+      mockPrisma.roomMember.findMany.mockResolvedValue([{ userId: 'admin-1' }]);
+      txPrisma.room.updateMany.mockResolvedValue({ count: 1 });
+      txPrisma.roomKeyGrant.upsert.mockResolvedValue({});
+      const listener = jest.fn();
+      service.onEpochAdvanced(listener);
+
+      await service.uploadGrants('room-1', 'admin-1', {
+        claimEpoch: { expectedCurrentKeyId: 0 },
+        grants: [{ userId: 'admin-1', keyId: 1, wrappedKey: 'w1', recipientKeyFp: 'fp1' }],
+      });
+
+      expect(listener).toHaveBeenCalledWith('room-1', 1);
+    });
+
+    it('does not notify epoch listeners when the claim loses the race', async () => {
+      mockPrisma.roomMember.findUnique.mockResolvedValue({ roomId: 'room-1', userId: 'admin-1', role: 'admin' });
+      mockPrisma.roomMember.findMany.mockResolvedValue([{ userId: 'admin-1' }]);
+      txPrisma.room.updateMany.mockResolvedValue({ count: 0 });
+      const listener = jest.fn();
+      service.onEpochAdvanced(listener);
+
+      await expect(
+        service.uploadGrants('room-1', 'admin-1', {
+          claimEpoch: { expectedCurrentKeyId: 0 },
+          grants: [{ userId: 'admin-1', keyId: 1, wrappedKey: 'w1', recipientKeyFp: 'fp1' }],
+        }),
+      ).rejects.toThrow(ConflictException);
+      expect(listener).not.toHaveBeenCalled();
+    });
+
     it('a losing racer (expectedCurrentKeyId stale) gets ConflictException and its transaction rolls back — no grants inserted', async () => {
       mockPrisma.roomMember.findUnique.mockResolvedValue({ roomId: 'room-1', userId: 'admin-1', role: 'admin' });
       mockPrisma.roomMember.findMany.mockResolvedValue([{ userId: 'admin-1' }]);

@@ -28,12 +28,19 @@ const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
 const MSG_E2EE_REJECTED = WsMsgType.E2EE_REJECTED;
 const MSG_ROOM_EPOCH = WsMsgType.ROOM_EPOCH;
+const MSG_KEY_REQUEST = WsMsgType.KEY_REQUEST;
+const MSG_KEY_GRANTED = WsMsgType.KEY_GRANTED;
 const ROOM_GC_DELAY_MS = 30_000;
 const PERSIST_DEBOUNCE_MS = 5_000;
 
 const UPDATE_CHANNEL_PREFIX = 'room:update:';
 const AWARENESS_CHANNEL_PREFIX = 'room:awareness:';
 const EPOCH_CHANNEL_PREFIX = 'room:epoch:'; // + Prisma Room.id
+const KEY_REQUEST_CHANNEL_PREFIX = 'room:keyreq:'; // + Prisma Room.id
+const KEY_GRANT_CHANNEL_PREFIX = 'room:keygrant:'; // + Prisma Room.id
+
+// T16: a socket's key requests are relayed at most this often.
+const KEY_REQUEST_MIN_INTERVAL_MS = 1_000;
 
 // y-protocols/sync message types carrying a doc update (step1 only carries a
 // state vector).
@@ -56,6 +63,16 @@ interface RedisPayload {
 interface EpochPayload {
   origin: string;
   keyId: number;
+}
+
+interface KeyRequestPayload {
+  origin: string;
+  userId: string; // the requester: their own sockets don't get the relay
+}
+
+interface KeyGrantPayload {
+  origin: string;
+  userIds: string[];
 }
 
 interface RejectionState {
@@ -100,6 +117,10 @@ export class SyncGateway
   // DB read and its dbId being known, and loadRoomState takes the max with
   // this so that event isn't lost. One small entry per E2EE room.
   private readonly epochByDbId = new Map<string, number>();
+  // T16: authenticated user per socket, to route key requests and grant
+  // notices by user.
+  private readonly clientUser = new WeakMap<WebSocket, string>();
+  private readonly lastKeyRequestAt = new WeakMap<WebSocket, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -116,6 +137,8 @@ export class SyncGateway
       `${UPDATE_CHANNEL_PREFIX}*`,
       `${AWARENESS_CHANNEL_PREFIX}*`,
       `${EPOCH_CHANNEL_PREFIX}*`,
+      `${KEY_REQUEST_CHANNEL_PREFIX}*`,
+      `${KEY_GRANT_CHANNEL_PREFIX}*`,
     );
     this.sub.on('pmessage', (_pattern: string, channel: string, message: string) => {
       const parsed: unknown = JSON.parse(message);
@@ -125,6 +148,16 @@ export class SyncGateway
 
       if (channel.startsWith(EPOCH_CHANNEL_PREFIX)) {
         this.raiseEpoch(channel.slice(EPOCH_CHANNEL_PREFIX.length), (parsed as EpochPayload).keyId);
+        return;
+      }
+      if (channel.startsWith(KEY_REQUEST_CHANNEL_PREFIX)) {
+        const { userId } = parsed as KeyRequestPayload;
+        this.relayKeyRequest(channel.slice(KEY_REQUEST_CHANNEL_PREFIX.length), userId);
+        return;
+      }
+      if (channel.startsWith(KEY_GRANT_CHANNEL_PREFIX)) {
+        const { userIds } = parsed as KeyGrantPayload;
+        this.notifyGrantRecipients(channel.slice(KEY_GRANT_CHANNEL_PREFIX.length), userIds);
         return;
       }
 
@@ -158,6 +191,75 @@ export class SyncGateway
         .publish(`${EPOCH_CHANNEL_PREFIX}${dbId}`, JSON.stringify(payload))
         .catch((err: Error) => this.logger.warn(`Failed to publish room epoch: ${err.message}`));
     });
+
+    // T16: grants stored through this instance's REST API — tell the
+    // recipients' sockets here, then on the other instances.
+    this.roomKeys.onGrantsStored((dbId, userIds) => {
+      this.notifyGrantRecipients(dbId, userIds);
+      const payload: KeyGrantPayload = { origin: this.instanceId, userIds };
+      this.pub
+        .publish(`${KEY_GRANT_CHANNEL_PREFIX}${dbId}`, JSON.stringify(payload))
+        .catch((err: Error) => this.logger.warn(`Failed to publish key grant notice: ${err.message}`));
+    });
+  }
+
+  /**
+   * T16: asks the room's other members' sockets on this instance to serve
+   * pending grants (first-responder, ADR-010). The requester's own sockets
+   * are skipped: they hold nothing to serve. Type-only frame, no ids.
+   */
+  private relayKeyRequest(dbId: string, requesterId: string): void {
+    if (typeof requesterId !== 'string') return;
+    const frame = encodeTypeOnly(MSG_KEY_REQUEST);
+    for (const room of this.rooms.values()) {
+      if (room.dbId !== dbId) continue;
+      for (const client of room.clients) {
+        if (this.clientUser.get(client) !== requesterId && client.readyState === WebSocket.OPEN) {
+          client.send(frame);
+        }
+      }
+    }
+  }
+
+  /** T16: tells only the recipients' sockets in that room that their grant landed. */
+  private notifyGrantRecipients(dbId: string, userIds: string[]): void {
+    if (!Array.isArray(userIds)) return;
+    const recipients = new Set(userIds);
+    const frame = encodeTypeOnly(MSG_KEY_GRANTED);
+    for (const room of this.rooms.values()) {
+      if (room.dbId !== dbId) continue;
+      for (const client of room.clients) {
+        const user = this.clientUser.get(client);
+        if (user !== undefined && recipients.has(user) && client.readyState === WebSocket.OPEN) {
+          client.send(frame);
+        }
+      }
+    }
+  }
+
+  /**
+   * T16: a member says it's missing a grant. Relayed (locally and over Redis)
+   * only in an E2EE room, only if the server agrees something is pending for
+   * that user, and at most once a second per socket.
+   */
+  private handleKeyRequest(client: WebSocket, room: RoomState): void {
+    const userId = this.clientUser.get(client);
+    const dbId = room.dbId;
+    if (!userId || !dbId || room.currentKeyId <= 0 || room.roomId === 'default') return;
+    const now = Date.now();
+    const last = this.lastKeyRequestAt.get(client);
+    if (last !== undefined && now - last < KEY_REQUEST_MIN_INTERVAL_MS) return;
+    this.lastKeyRequestAt.set(client, now);
+
+    void this.roomKeys
+      .hasPendingFor(dbId, userId)
+      .then((pending) => {
+        if (!pending) return;
+        this.relayKeyRequest(dbId, userId);
+        const payload: KeyRequestPayload = { origin: this.instanceId, userId };
+        return this.pub.publish(`${KEY_REQUEST_CHANNEL_PREFIX}${dbId}`, JSON.stringify(payload));
+      })
+      .catch((err: Error) => this.logger.warn(`Failed to relay key request: ${err.message}`));
   }
 
   /**
@@ -226,6 +328,7 @@ export class SyncGateway
 
     room.clients.add(client);
     this.clientRoom.set(client, roomId);
+    this.clientUser.set(client, userId);
     this.metrics.incWsConnections();
 
     // Heartbeat liveness: alive on connect, re-armed on every pong.
@@ -371,6 +474,8 @@ export class SyncGateway
         // the client's IDs, fans out to local clients and publishes to Redis.
         const update = decoding.readVarUint8Array(decoder);
         awarenessProtocol.applyAwarenessUpdate(room.awareness, update, client);
+      } else if (msgType === MSG_KEY_REQUEST) {
+        this.handleKeyRequest(client, room);
       }
     } catch (err: any) {
       this.logger.error(`Error handling message: ${err.message}`);
@@ -618,6 +723,13 @@ function encodeRoomEpoch(keyId: number): Uint8Array {
   const encoder = encoding.createEncoder();
   encoding.writeVarUint(encoder, MSG_ROOM_EPOCH);
   encoding.writeVarUint(encoder, keyId);
+  return encoding.toUint8Array(encoder);
+}
+
+/** T16 KEY_REQUEST / KEY_GRANTED frames: the varUint type alone. */
+function encodeTypeOnly(type: number): Uint8Array {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, type);
   return encoding.toUint8Array(encoder);
 }
 

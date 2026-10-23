@@ -36,7 +36,7 @@ describe('SyncGateway', () => {
   let pub: ReturnType<typeof redisMock>;
   let sub: ReturnType<typeof redisMock>;
   let metrics: ReturnType<typeof metricsMock>;
-  let roomKeys: { onEpochAdvanced: jest.Mock };
+  let roomKeys: { onEpochAdvanced: jest.Mock; onGrantsStored: jest.Mock; hasPendingFor: jest.Mock };
 
   beforeEach(async () => {
     jwt = { verify: jest.fn() };
@@ -51,7 +51,7 @@ describe('SyncGateway', () => {
     pub = redisMock();
     sub = redisMock();
     metrics = metricsMock();
-    roomKeys = { onEpochAdvanced: jest.fn() };
+    roomKeys = { onEpochAdvanced: jest.fn(), onGrantsStored: jest.fn(), hasPendingFor: jest.fn() };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -871,6 +871,143 @@ describe('SyncGateway', () => {
 
         expect(warn).toHaveBeenCalledWith(expect.stringContaining('epoch'));
       });
+    });
+  });
+
+  describe('live key grants (T16)', () => {
+    const KEY_REQUEST = 22;
+    const KEY_GRANTED = 23;
+
+    function typesSent(socket: FakeSocket): number[] {
+      return socket.sent.map((bytes) => decoding.readVarUint(decoding.createDecoder(new Uint8Array(bytes))));
+    }
+
+    function frame(type: number): Buffer {
+      const enc = encoding.createEncoder();
+      encoding.writeVarUint(enc, type);
+      return Buffer.from(encoding.toUint8Array(enc));
+    }
+
+    const flush = () => new Promise((r) => setImmediate(r));
+
+    /** Connects one socket per user to `roomName` (an E2EE room at `keyId`). */
+    async function connect(roomName: string, keyId: number, users: string[]): Promise<FakeSocket[]> {
+      rooms.isMember.mockResolvedValue(true);
+      prisma.room.findUnique.mockResolvedValue({ id: `db-${roomName}`, name: roomName, currentKeyId: keyId, yjsState: null });
+      const sockets: FakeSocket[] = [];
+      for (const user of users) {
+        jwt.verify.mockReturnValueOnce({ sub: user });
+        const socket = new FakeSocket();
+        await gateway.handleConnection(socket as any, fakeReq({ room: roomName, token: 'ok' }));
+        socket.sent.length = 0;
+        sockets.push(socket);
+      }
+      return sockets;
+    }
+
+    function onPmessage() {
+      return sub.on.mock.calls.find(([event]) => event === 'pmessage')![1] as (
+        pattern: string,
+        channel: string,
+        message: string,
+      ) => void;
+    }
+
+    it('relays a pending member\'s key request to the other members\' sockets only, and to other instances', async () => {
+      gateway.onModuleInit();
+      const [holder, gated, gatedOtherDevice] = await connect('team-a', 1, ['user-1', 'user-2', 'user-2']);
+      roomKeys.hasPendingFor.mockResolvedValue(true);
+
+      gated.emit('message', frame(KEY_REQUEST));
+      await flush();
+
+      expect(roomKeys.hasPendingFor).toHaveBeenCalledWith('db-team-a', 'user-2');
+      expect(typesSent(holder)).toEqual([KEY_REQUEST]);
+      // The frame is the type alone: no ids, no key material.
+      expect(holder.sent[0].byteLength).toBe(1);
+      expect(typesSent(gated)).toEqual([]);
+      expect(typesSent(gatedOtherDevice)).toEqual([]);
+      expect(pub.publish).toHaveBeenCalledWith('room:keyreq:db-team-a', expect.stringContaining('"userId":"user-2"'));
+    });
+
+    it('drops a key request from a member who has nothing pending', async () => {
+      gateway.onModuleInit();
+      const [holder, requester] = await connect('team-a', 1, ['user-1', 'user-2']);
+      roomKeys.hasPendingFor.mockResolvedValue(false);
+
+      requester.emit('message', frame(KEY_REQUEST));
+      await flush();
+
+      expect(typesSent(holder)).toEqual([]);
+      expect(pub.publish).not.toHaveBeenCalledWith(expect.stringMatching(/^room:keyreq:/), expect.anything());
+    });
+
+    it('ignores key requests in a plaintext room', async () => {
+      gateway.onModuleInit();
+      const [holder, requester] = await connect('team-b', 0, ['user-1', 'user-2']);
+
+      requester.emit('message', frame(KEY_REQUEST));
+      await flush();
+
+      expect(roomKeys.hasPendingFor).not.toHaveBeenCalled();
+      expect(typesSent(holder)).toEqual([]);
+    });
+
+    it('relays at most one key request per socket per second', async () => {
+      gateway.onModuleInit();
+      const [holder, gated] = await connect('team-a', 1, ['user-1', 'user-2']);
+      roomKeys.hasPendingFor.mockResolvedValue(true);
+
+      gated.emit('message', frame(KEY_REQUEST));
+      gated.emit('message', frame(KEY_REQUEST));
+      await flush();
+
+      expect(roomKeys.hasPendingFor).toHaveBeenCalledTimes(1);
+      expect(typesSent(holder)).toEqual([KEY_REQUEST]);
+    });
+
+    it('relays a key request from another instance (Redis) to local sockets of other users', async () => {
+      gateway.onModuleInit();
+      const [holder, gated] = await connect('team-a', 1, ['user-1', 'user-2']);
+
+      onPmessage()('room:keyreq:*', 'room:keyreq:db-team-a', JSON.stringify({ origin: 'other', userId: 'user-2' }));
+
+      expect(typesSent(holder)).toEqual([KEY_REQUEST]);
+      expect(typesSent(gated)).toEqual([]);
+    });
+
+    it('tells only the recipients\' sockets that their grant landed, and other instances', async () => {
+      gateway.onModuleInit();
+      const [holder, gated, bystander] = await connect('team-a', 1, ['user-1', 'user-2', 'user-3']);
+      const listener = roomKeys.onGrantsStored.mock.calls[0][0] as (roomId: string, userIds: string[]) => void;
+
+      listener('db-team-a', ['user-2']);
+
+      expect(typesSent(gated)).toEqual([KEY_GRANTED]);
+      expect(gated.sent[0].byteLength).toBe(1);
+      expect(typesSent(holder)).toEqual([]);
+      expect(typesSent(bystander)).toEqual([]);
+      expect(pub.publish).toHaveBeenCalledWith('room:keygrant:db-team-a', expect.stringContaining('"userIds":["user-2"]'));
+    });
+
+    it('delivers a grant notice from another instance (Redis) to the recipient only', async () => {
+      gateway.onModuleInit();
+      const [holder, gated] = await connect('team-a', 1, ['user-1', 'user-2']);
+
+      onPmessage()('room:keygrant:*', 'room:keygrant:db-team-a', JSON.stringify({ origin: 'other', userIds: ['user-2'] }));
+
+      expect(typesSent(gated)).toEqual([KEY_GRANTED]);
+      expect(typesSent(holder)).toEqual([]);
+    });
+
+    it('does not deliver a grant notice to the same user in a different room', async () => {
+      gateway.onModuleInit();
+      const [elsewhere] = await connect('team-c', 1, ['user-2']);
+      const listener = roomKeys.onGrantsStored.mock.calls[0][0] as (roomId: string, userIds: string[]) => void;
+
+      listener('db-team-a', ['user-2']);
+
+      expect(typesSent(elsewhere)).toEqual([]);
     });
   });
 });

@@ -29,8 +29,11 @@ export interface RoomKeyGrantView {
  * ciphertext grants clients hand it.
  */
 export type EpochAdvancedListener = (roomId: string, currentKeyId: number) => void;
+/** T16: grants for `userIds` were stored in room `roomId` (Prisma Room.id). */
+export type GrantsStoredListener = (roomId: string, userIds: string[]) => void;
 
 const EPOCH_ADVANCED = 'epochAdvanced';
+const GRANTS_STORED = 'grantsStored';
 
 @Injectable()
 export class RoomKeysService {
@@ -42,6 +45,27 @@ export class RoomKeysService {
   onEpochAdvanced(listener: EpochAdvancedListener): () => void {
     this.epochEvents.on(EPOCH_ADVANCED, listener);
     return () => this.epochEvents.off(EPOCH_ADVANCED, listener);
+  }
+
+  // T16: fires after grants commit (plain serve or epoch claim), so the sync
+  // gateway can tell each recipient's open sockets to load them live.
+  onGrantsStored(listener: GrantsStoredListener): () => void {
+    this.epochEvents.on(GRANTS_STORED, listener);
+    return () => this.epochEvents.off(GRANTS_STORED, listener);
+  }
+
+  /**
+   * T16: whether `userId` is a member of the room still missing a current
+   * grant for some reached epoch. The sync gateway relays a member's live key
+   * request only when this holds; never throws (a non-member is just false).
+   */
+  async hasPendingFor(roomId: string, userId: string): Promise<boolean> {
+    try {
+      const pending = await this.getPending(roomId, userId);
+      return pending.some((p) => p.userId === userId);
+    } catch {
+      return false;
+    }
   }
 
   constructor(private readonly prisma: PrismaService) {}
@@ -148,6 +172,7 @@ export class RoomKeysService {
         }
       }
       await this.upsertGrants(this.prisma, roomId, dto.grants);
+      this.emitGrantsStored(roomId, dto.grants);
       return { currentKeyId: room.currentKeyId };
     }
 
@@ -183,6 +208,7 @@ export class RoomKeysService {
       return { currentKeyId: claimedKeyId };
     });
     this.epochEvents.emit(EPOCH_ADVANCED, roomId, claimed.currentKeyId);
+    this.emitGrantsStored(roomId, dto.grants);
     return claimed;
   }
 
@@ -213,6 +239,11 @@ export class RoomKeysService {
         }),
       ),
     );
+  }
+
+  private emitGrantsStored(roomId: string, grants: UploadKeysDto['grants']): void {
+    const userIds = [...new Set(grants.map((g) => g.userId))];
+    if (userIds.length > 0) this.epochEvents.emit(GRANTS_STORED, roomId, userIds);
   }
 
   private async assertMember(roomId: string, userId: string) {

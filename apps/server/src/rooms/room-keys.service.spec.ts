@@ -316,6 +316,105 @@ describe('RoomKeysService', () => {
     });
   });
 
+  // T16: the sync gateway tells each recipient's sockets live that a grant
+  // landed, so a gated member unlocks without re-opening the room.
+  describe('grant notifications (T16)', () => {
+    it('notifies grant listeners with the room id and recipients after a plain serve', async () => {
+      mockPrisma.roomMember.findUnique.mockResolvedValue({ roomId: 'room-1', userId: 'user-2', role: 'member' });
+      mockPrisma.roomMember.findMany.mockResolvedValue([{ userId: 'user-2' }, { userId: 'user-3' }]);
+      mockPrisma.room.findUniqueOrThrow.mockResolvedValue({ id: 'room-1', currentKeyId: 2 });
+      mockPrisma.roomKeyGrant.upsert.mockResolvedValue({});
+      const listener = jest.fn();
+      service.onGrantsStored(listener);
+
+      await service.uploadGrants('room-1', 'user-2', {
+        grants: [
+          { userId: 'user-3', keyId: 1, wrappedKey: 'w1', recipientKeyFp: 'fp3' },
+          { userId: 'user-3', keyId: 2, wrappedKey: 'w2', recipientKeyFp: 'fp3' },
+        ],
+      });
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith('room-1', ['user-3']);
+    });
+
+    it('notifies grant listeners after an epoch claim commits', async () => {
+      mockPrisma.roomMember.findUnique.mockResolvedValue({ roomId: 'room-1', userId: 'admin-1', role: 'admin' });
+      mockPrisma.roomMember.findMany.mockResolvedValue([{ userId: 'admin-1' }, { userId: 'user-2' }]);
+      txPrisma.room.updateMany.mockResolvedValue({ count: 1 });
+      txPrisma.roomKeyGrant.upsert.mockResolvedValue({});
+      const listener = jest.fn();
+      service.onGrantsStored(listener);
+
+      await service.uploadGrants('room-1', 'admin-1', {
+        claimEpoch: { expectedCurrentKeyId: 0 },
+        grants: [
+          { userId: 'admin-1', keyId: 1, wrappedKey: 'w1', recipientKeyFp: 'fp1' },
+          { userId: 'user-2', keyId: 1, wrappedKey: 'w2', recipientKeyFp: 'fp2' },
+        ],
+      });
+
+      expect(listener).toHaveBeenCalledWith('room-1', ['admin-1', 'user-2']);
+    });
+
+    it('does not notify when the claim loses the race', async () => {
+      mockPrisma.roomMember.findUnique.mockResolvedValue({ roomId: 'room-1', userId: 'admin-1', role: 'admin' });
+      mockPrisma.roomMember.findMany.mockResolvedValue([{ userId: 'admin-1' }]);
+      txPrisma.room.updateMany.mockResolvedValue({ count: 0 });
+      const listener = jest.fn();
+      service.onGrantsStored(listener);
+
+      await expect(
+        service.uploadGrants('room-1', 'admin-1', {
+          claimEpoch: { expectedCurrentKeyId: 0 },
+          grants: [{ userId: 'admin-1', keyId: 1, wrappedKey: 'w1', recipientKeyFp: 'fp1' }],
+        }),
+      ).rejects.toThrow(ConflictException);
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('does not notify for an empty serve', async () => {
+      mockPrisma.roomMember.findUnique.mockResolvedValue({ roomId: 'room-1', userId: 'user-2', role: 'member' });
+      mockPrisma.room.findUniqueOrThrow.mockResolvedValue({ id: 'room-1', currentKeyId: 1 });
+      const listener = jest.fn();
+      service.onGrantsStored(listener);
+
+      await service.uploadGrants('room-1', 'user-2', { grants: [] });
+
+      expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('hasPendingFor (T16)', () => {
+    function roomWithMember(grants: unknown[]) {
+      mockPrisma.room.findUnique.mockResolvedValue({ id: 'room-1', currentKeyId: 1 });
+      mockPrisma.roomMember.findUnique.mockResolvedValue({ roomId: 'room-1', userId: 'user-2', role: 'member' });
+      mockPrisma.roomMember.findMany.mockResolvedValue([
+        { roomId: 'room-1', userId: 'user-1', role: 'admin', user: { id: 'user-1', publicKey: 'pk1', publicKeyFp: 'fp1' } },
+        { roomId: 'room-1', userId: 'user-2', role: 'member', user: { id: 'user-2', publicKey: 'pk2', publicKeyFp: 'fp2' } },
+      ]);
+      mockPrisma.roomKeyGrant.findMany.mockResolvedValue(grants);
+    }
+
+    it('is true when the user is missing a current grant', async () => {
+      roomWithMember([{ userId: 'user-1', keyId: 1, recipientKeyFp: 'fp1' }]);
+      await expect(service.hasPendingFor('room-1', 'user-2')).resolves.toBe(true);
+    });
+
+    it('is false when only another member is missing a grant', async () => {
+      roomWithMember([{ userId: 'user-2', keyId: 1, recipientKeyFp: 'fp2' }]);
+      await expect(service.hasPendingFor('room-1', 'user-2')).resolves.toBe(false);
+    });
+
+    it('is false (never throws) for a non-member or an unknown room', async () => {
+      mockPrisma.room.findUnique.mockResolvedValue({ id: 'room-1', currentKeyId: 1 });
+      mockPrisma.roomMember.findUnique.mockResolvedValue(null);
+      await expect(service.hasPendingFor('room-1', 'outsider')).resolves.toBe(false);
+      mockPrisma.room.findUnique.mockResolvedValue(null);
+      await expect(service.hasPendingFor('nope', 'user-2')).resolves.toBe(false);
+    });
+  });
+
   describe('getMembersWithPublicKeys', () => {
     // Necessary for enablement (0->1): before any epoch exists, the admin
     // wrapping a brand-new room key needs every current member's published

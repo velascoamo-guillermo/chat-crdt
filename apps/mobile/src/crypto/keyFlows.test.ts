@@ -20,6 +20,7 @@ mock.module('react-native-libsodium', () => ({
     from_base64: (s: string) => new TextEncoder().encode(s),
     to_base64: (b: Uint8Array) => new TextDecoder().decode(b),
     crypto_box_seal: (_msg: Uint8Array, _pk: Uint8Array, _fmt: string) => 'sealed',
+    crypto_aead_xchacha20poly1305_ietf_keygen: (_fmt: string) => 'minted-room-key',
     crypto_box_seal_open: (wrapped: Uint8Array, _pk: Uint8Array, _sk: Uint8Array) => {
       const label = new TextDecoder().decode(wrapped);
       if (sealShouldThrowForKeyId !== null && label === `wrapped-for-epoch-${sealShouldThrowForKeyId}`) {
@@ -43,7 +44,8 @@ mock.module('react-native-libsodium', () => ({
   },
 }));
 
-const { ensureIdentityPublished, fetchAndLoadMyGrants, servePendingGrants, userIdFromToken } = await import('./keyFlows');
+const { ensureIdentityPublished, fetchAndLoadMyGrants, servePendingGrants, enableOrRotateRoomKey, userIdFromToken } =
+  await import('./keyFlows');
 const { computePublicKeyFp } = await import('./publicKeyFp');
 
 function memoryBackend(): SecureKeyValueStore & { map: Map<string, string> } {
@@ -365,6 +367,162 @@ describe('servePendingGrants (T15)', () => {
 
     await expect(servePendingGrants(ctxFor('bob'), 'r1', keyStore)).resolves.toBe(0);
     expect(posts).toEqual([]);
+  });
+});
+
+/**
+ * T15 fix 1: Android Keystore writes take 0.5–3.8s each under load (T16
+ * report), so the live cipher must get its keys before any cache write.
+ * `mode` switches setItem to hang forever or throw after setup.
+ */
+function slowBackend() {
+  const base = memoryBackend();
+  const state = { mode: 'ok' as 'ok' | 'hang' | 'fail', reads: [] as string[] };
+  const backend: SecureKeyValueStore & { map: Map<string, string> } = {
+    map: base.map,
+    getItem: (key) => {
+      state.reads.push(key);
+      return base.getItem(key);
+    },
+    setItem: (key, value) => {
+      if (state.mode === 'hang') return new Promise<void>(() => undefined);
+      if (state.mode === 'fail') return Promise.reject(new Error('keystore busy'));
+      return base.setItem(key, value);
+    },
+    removeItem: base.removeItem,
+  };
+  return { backend, state };
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+const TWO_GRANTS = [
+  { roomId: 'r1', userId: 'u1', keyId: 1, wrappedKey: 'wrapped-for-epoch-1', recipientKeyFp: 'fp' },
+  { roomId: 'r1', userId: 'u1', keyId: 2, wrappedKey: 'wrapped-for-epoch-2', recipientKeyFp: 'fp' },
+];
+
+describe('fetchAndLoadMyGrants — unlock before caching (T15 fix 1)', () => {
+  beforeEach(() => {
+    sealShouldThrowForKeyId = null;
+  });
+
+  it('hands every unwrapped key to the cipher even while cache writes hang', async () => {
+    const { backend, state } = slowBackend();
+    const keyStore = new RoomKeyStore(backend);
+    await keyStore.forUser('u1').setIdentity({ publicKey: 'device-pub', privateKey: 'device-priv' });
+    state.mode = 'hang';
+    useFetch(async () => new Response(JSON.stringify(TWO_GRANTS)));
+    const setKeyCalls: number[] = [];
+
+    void fetchAndLoadMyGrants(CTX, 'r1', keyStore, { setKey: (k: number) => setKeyCalls.push(k) } as never);
+    await flush();
+
+    expect(setKeyCalls.sort()).toEqual([1, 2]);
+  });
+
+  it('still resolves with every key loaded when cache writes fail', async () => {
+    const { backend, state } = slowBackend();
+    const keyStore = new RoomKeyStore(backend);
+    await keyStore.forUser('u1').setIdentity({ publicKey: 'device-pub', privateKey: 'device-priv' });
+    state.mode = 'fail';
+    useFetch(async () => new Response(JSON.stringify(TWO_GRANTS)));
+    const setKeyCalls: number[] = [];
+
+    await expect(
+      fetchAndLoadMyGrants(CTX, 'r1', keyStore, { setKey: (k: number) => setKeyCalls.push(k) } as never)
+    ).resolves.toBeUndefined();
+    expect(setKeyCalls.sort()).toEqual([1, 2]);
+  });
+
+  it('does not read cached room keys before unlocking', async () => {
+    const { backend, state } = slowBackend();
+    const keyStore = new RoomKeyStore(backend);
+    await keyStore.forUser('u1').setIdentity({ publicKey: 'device-pub', privateKey: 'device-priv' });
+    useFetch(async () => new Response(JSON.stringify(TWO_GRANTS)));
+    const seen: { readsAtFirstSetKey: string[] | null } = { readsAtFirstSetKey: null };
+    const cipher = { setKey: () => (seen.readsAtFirstSetKey ??= [...state.reads]) };
+    state.reads.length = 0;
+
+    await fetchAndLoadMyGrants(CTX, 'r1', keyStore, cipher as never);
+
+    expect(seen.readsAtFirstSetKey).not.toBeNull();
+    expect(seen.readsAtFirstSetKey!.filter((k) => k.includes('roomKey'))).toEqual([]);
+  });
+
+  it('falls back to the cached key for a grant that no longer unwraps', async () => {
+    const keyStore = new RoomKeyStore(memoryBackend());
+    const store = keyStore.forUser('u1');
+    await store.setIdentity({ publicKey: 'device-pub', privateKey: 'device-priv' });
+    await store.cacheRoomKey('r1', 2, 'cached-epoch-2');
+    sealShouldThrowForKeyId = 2;
+    useFetch(async () => new Response(JSON.stringify(TWO_GRANTS)));
+    const loaded: Record<number, string> = {};
+    const cipher = { setKey: (k: number, bytes: Uint8Array) => (loaded[k] = new TextDecoder().decode(bytes)) };
+
+    await fetchAndLoadMyGrants(CTX, 'r1', keyStore, cipher as never);
+
+    expect(loaded).toEqual({ 1: 'wrapped-for-epoch-1', 2: 'cached-epoch-2' });
+  });
+
+  it('reuses the identity ensureIdentityPublished just read instead of reading it again', async () => {
+    const { backend, state } = slowBackend();
+    // Stored by an earlier app session: nothing in memory yet.
+    backend.map.set('e2ee.user.u1.identity', JSON.stringify({ publicKey: 'device-pub', privateKey: 'device-priv' }));
+    const keyStore = new RoomKeyStore(backend);
+    const server = fakeKeyServer({ u1: 'device-pub' });
+    useFetch(async (input, init) =>
+      String(input).includes('/rooms/') ? new Response(JSON.stringify(TWO_GRANTS)) : server.handler(input, init)
+    );
+    state.reads.length = 0;
+
+    await ensureIdentityPublished(CTX, keyStore);
+    await fetchAndLoadMyGrants(CTX, 'r1', keyStore, { setKey: () => undefined } as never);
+
+    expect(state.reads.filter((k) => k.endsWith('.identity'))).toHaveLength(1);
+  });
+});
+
+describe('enableOrRotateRoomKey (T15 fix 1)', () => {
+  it("caches the minted key in the caller's own scope only, after handing it to the cipher", async () => {
+    const { backend, state } = slowBackend();
+    const keyStore = new RoomKeyStore(backend);
+    useFetch(async () => new Response(JSON.stringify({ currentKeyId: 1 })));
+    const setKeyCalls: number[] = [];
+    const cipher = { setKey: (k: number) => setKeyCalls.push(k) };
+
+    state.mode = 'hang';
+    void enableOrRotateRoomKey(ctxFor('alice'), 'r1', 0, [], keyStore, cipher as never);
+    await flush();
+    expect(setKeyCalls).toEqual([1]);
+
+    state.mode = 'ok';
+    await enableOrRotateRoomKey(ctxFor('alice'), 'r2', 0, [], keyStore, cipher as never);
+    expect(await keyStore.forUser('alice').getRoomKey('r2', 1)).toBe('minted-room-key');
+    expect(await keyStore.forUser('bob').getRoomKey('r2', 1)).toBeNull();
+  });
+});
+
+describe('legacy room-key cache (T15 fix 1)', () => {
+  const LEGACY = { publicKey: 'legacy-pub', privateKey: 'legacy-priv' };
+
+  it('lets the user who adopted the legacy identity serve grants from the legacy room-key cache', async () => {
+    const backend = memoryBackend();
+    backend.map.set('e2ee.identity', JSON.stringify(LEGACY));
+    backend.map.set('e2ee.roomKey.r1.1', 'legacy-room-key');
+    const keyStore = new RoomKeyStore(backend);
+    const server = fakeKeyServer({ alice: 'legacy-pub' });
+    await (useFetch(server.handler), ensureIdentityPublished(ctxFor('alice'), keyStore));
+    const posts: string[] = [];
+    useFetch(async (input, init) => {
+      if (init?.method === 'POST') {
+        posts.push(String(init.body));
+        return new Response('{}');
+      }
+      return new Response(JSON.stringify([{ userId: 'carol', keyId: 1, publicKey: 'carol-pub' }]));
+    });
+
+    await expect(servePendingGrants(ctxFor('alice'), 'r1', keyStore)).resolves.toBe(1);
+    expect(backend.map.get('e2ee.roomKey.r1.1')).toBe('legacy-room-key');
   });
 });
 

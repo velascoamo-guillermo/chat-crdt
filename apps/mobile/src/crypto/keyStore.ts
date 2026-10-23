@@ -30,6 +30,24 @@ const LEGACY_CLAIM_STORAGE_KEY = 'e2ee.identity.claimedBy';
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 /**
+ * T15 fix 1: identities read or written per backend, by user id. Keychain /
+ * Keystore reads can take seconds under load (T16 report), and the identity
+ * is needed on every room unlock. Keyed by backend, not by store instance,
+ * because the app holds several RoomKeyStore instances over the same
+ * SecureStore. Only present identities are kept, so a miss is never stale.
+ */
+const identityMemo = new WeakMap<SecureKeyValueStore, Map<string, IdentityKeyPair>>();
+
+function memoFor(backend: SecureKeyValueStore): Map<string, IdentityKeyPair> {
+  let memo = identityMemo.get(backend);
+  if (!memo) {
+    memo = new Map();
+    identityMemo.set(backend, memo);
+  }
+  return memo;
+}
+
+/**
  * Every unwrapped (roomId, keyId) pair this device has been granted is
  * cached here — not just the current epoch, since decrypting history needs
  * the full local set (ADR-010, Key management).
@@ -44,7 +62,7 @@ export class RoomKeyStore {
 
   forUser(userId: string): UserKeyStore {
     if (!USER_ID_PATTERN.test(userId)) throw new Error('RoomKeyStore: invalid user id');
-    return new UserKeyStore(this.backend, `e2ee.user.${userId}`);
+    return new UserKeyStore(this.backend, userId);
   }
 
   /**
@@ -68,10 +86,14 @@ export class RoomKeyStore {
 }
 
 export class UserKeyStore {
+  private readonly prefix: string;
+
   constructor(
     private readonly backend: SecureKeyValueStore,
-    private readonly prefix: string
-  ) {}
+    private readonly userId: string
+  ) {
+    this.prefix = `e2ee.user.${userId}`;
+  }
 
   private identityKey(): string {
     return `${this.prefix}.identity`;
@@ -85,13 +107,40 @@ export class UserKeyStore {
     return `${this.prefix}.currentEpoch.${roomId}`;
   }
 
+  /** True only for the user who adopted the pre-T15 identity on this device. */
+  private async ownsLegacyCache(): Promise<boolean> {
+    return (await this.backend.getItem(LEGACY_CLAIM_STORAGE_KEY)) === this.userId;
+  }
+
+  /**
+   * T15 fix 1: the pre-T15 build cached room keys device-wide (SecureStore
+   * can't list keys, so they can't be moved in bulk). On a miss, the user
+   * who adopted the legacy identity falls back to that cache and copies the
+   * entry into their own scope; the original stays in place.
+   */
+  private async readLegacy(legacyKey: string, scopedKey: string): Promise<string | null> {
+    if (!(await this.ownsLegacyCache())) return null;
+    const value = await this.backend.getItem(legacyKey);
+    if (value !== null) {
+      await this.backend.setItem(scopedKey, value).catch(() => undefined);
+    }
+    return value;
+  }
+
   async getIdentity(): Promise<IdentityKeyPair | null> {
+    const memo = memoFor(this.backend);
+    const known = memo.get(this.userId);
+    if (known) return known;
     const raw = await this.backend.getItem(this.identityKey());
-    return raw ? (JSON.parse(raw) as IdentityKeyPair) : null;
+    if (!raw) return null;
+    const identity = JSON.parse(raw) as IdentityKeyPair;
+    memo.set(this.userId, identity);
+    return identity;
   }
 
   async setIdentity(identity: IdentityKeyPair): Promise<void> {
     await this.backend.setItem(this.identityKey(), JSON.stringify(identity));
+    memoFor(this.backend).set(this.userId, identity);
   }
 
   /**
@@ -104,6 +153,7 @@ export class UserKeyStore {
    * room keys.
    */
   async clearIdentity(): Promise<void> {
+    memoFor(this.backend).delete(this.userId);
     await this.backend.removeItem(this.identityKey());
   }
 
@@ -116,12 +166,15 @@ export class UserKeyStore {
   }
 
   async getRoomKey(roomId: string, keyId: number): Promise<string | null> {
-    return this.backend.getItem(this.roomKeyStorageKey(roomId, keyId));
+    const scopedKey = this.roomKeyStorageKey(roomId, keyId);
+    const own = await this.backend.getItem(scopedKey);
+    return own ?? this.readLegacy(`e2ee.roomKey.${roomId}.${keyId}`, scopedKey);
   }
 
   /** Highest epoch this user has cached a key for on this device, in this room — null if none. */
   async getCachedCurrentEpoch(roomId: string): Promise<number | null> {
-    const raw = await this.backend.getItem(this.currentEpochStorageKey(roomId));
+    const scopedKey = this.currentEpochStorageKey(roomId);
+    const raw = (await this.backend.getItem(scopedKey)) ?? (await this.readLegacy(`e2ee.currentEpoch.${roomId}`, scopedKey));
     return raw === null ? null : Number(raw);
   }
 }

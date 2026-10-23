@@ -27,7 +27,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token) return;
     syncIdentity();
-  }, [token]);
+  }, [token, syncIdentity]);
 
   useEffect(() => {
     if (isLoading) return;

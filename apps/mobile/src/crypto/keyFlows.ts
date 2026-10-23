@@ -182,6 +182,11 @@ export async function fetchAndLoadMyGrants(
   const privateKey = sodium.from_base64(identity.privateKey);
   const publicKey = sodium.from_base64(identity.publicKey);
 
+  // T15 fix 1: unlock first, persist after. Keystore writes can take
+  // seconds each under load (T16 report), and the live cipher only needs
+  // the unwrapped bytes — so every key reaches setKey before any cache
+  // write, and a slow or failing write can't delay or undo the unlock.
+  const unwrapped: { keyId: number; keyBytes: Uint8Array }[] = [];
   for (const grant of myGrants) {
     // Per-grant isolation (code review round 1, Important #4): one bad row
     // (corrupted wrappedKey, a grant sealed to a since-rotated identity that
@@ -190,18 +195,19 @@ export async function fetchAndLoadMyGrants(
     // unwrap — that would turn a single-epoch problem into "this member
     // can't decrypt this room at all".
     try {
-      const cached = await store.getRoomKey(roomId, grant.keyId);
-      if (cached) {
-        cipher.setKey(grant.keyId, sodium.from_base64(cached));
-        continue;
-      }
-      const wrapped = sodium.from_base64(grant.wrappedKey);
-      const keyBytes = sodium.crypto_box_seal_open(wrapped, publicKey, privateKey);
-      await store.cacheRoomKey(roomId, grant.keyId, sodium.to_base64(keyBytes));
+      const keyBytes = sodium.crypto_box_seal_open(sodium.from_base64(grant.wrappedKey), publicKey, privateKey);
       cipher.setKey(grant.keyId, keyBytes);
+      unwrapped.push({ keyId: grant.keyId, keyBytes });
     } catch {
-      continue;
+      // Not unwrappable with this identity (e.g. sealed to a key replaced
+      // elsewhere): a key cached earlier for this epoch still works.
+      const cached = await store.getRoomKey(roomId, grant.keyId).catch(() => null);
+      if (cached) cipher.setKey(grant.keyId, sodium.from_base64(cached));
     }
+  }
+
+  for (const { keyId, keyBytes } of unwrapped) {
+    await store.cacheRoomKey(roomId, keyId, sodium.to_base64(keyBytes)).catch(() => undefined);
   }
 }
 
@@ -250,8 +256,10 @@ export async function enableOrRotateRoomKey(
     body: JSON.stringify({ claimEpoch: { expectedCurrentKeyId }, grants }),
   });
 
-  await store.cacheRoomKey(roomId, newKeyId, roomKey);
+  // Unlock before persisting (T15 fix 1): the epoch is committed server-side
+  // by now, and the cache write is the slow part on Android.
   cipher.setKey(newKeyId, roomKeyBytes);
+  await store.cacheRoomKey(roomId, newKeyId, roomKey);
 
   return result;
 }

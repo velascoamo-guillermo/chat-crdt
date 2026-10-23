@@ -154,3 +154,55 @@ describe('RoomKeyStore.adoptLegacyIdentity', () => {
     expect(await root.adoptLegacyIdentity('user-a', 'legacy-pub')).toBe(true);
   });
 });
+
+describe('legacy room-key cache migration (T15 fix 1)', () => {
+  const LEGACY = { publicKey: 'legacy-pub', privateKey: 'legacy-priv' };
+
+  function withLegacyCache() {
+    const backend = makeMemoryBackend();
+    backend.map.set('e2ee.identity', JSON.stringify(LEGACY));
+    backend.map.set('e2ee.roomKey.room-1.1', 'legacy-key-1');
+    backend.map.set('e2ee.roomKey.room-1.2', 'legacy-key-2');
+    backend.map.set('e2ee.currentEpoch.room-1', '2');
+    return { backend, root: new RoomKeyStore(backend) };
+  }
+
+  it("copies a legacy room key into the adopting user's scope on first use, leaving the original", async () => {
+    const { backend, root } = withLegacyCache();
+    await root.adoptLegacyIdentity('user-a', 'legacy-pub');
+
+    expect(await root.forUser('user-a').getRoomKey('room-1', 1)).toBe('legacy-key-1');
+    expect(backend.map.get('e2ee.user.user-a.roomKey.room-1.1')).toBe('legacy-key-1');
+    expect(backend.map.get('e2ee.roomKey.room-1.1')).toBe('legacy-key-1');
+  });
+
+  it('carries over the legacy current epoch for the adopting user', async () => {
+    const { root } = withLegacyCache();
+    await root.adoptLegacyIdentity('user-a', 'legacy-pub');
+
+    expect(await root.forUser('user-a').getCachedCurrentEpoch('room-1')).toBe(2);
+  });
+
+  it("prefers the user's own cache over the legacy one", async () => {
+    const { root } = withLegacyCache();
+    await root.adoptLegacyIdentity('user-a', 'legacy-pub');
+    await root.forUser('user-a').cacheRoomKey('room-1', 1, 'own-key-1');
+
+    expect(await root.forUser('user-a').getRoomKey('room-1', 1)).toBe('own-key-1');
+  });
+
+  it('never exposes the legacy cache to a user who did not adopt the legacy identity', async () => {
+    const { backend, root } = withLegacyCache();
+    await root.adoptLegacyIdentity('user-a', 'legacy-pub');
+
+    expect(await root.forUser('user-b').getRoomKey('room-1', 1)).toBeNull();
+    expect(await root.forUser('user-b').getCachedCurrentEpoch('room-1')).toBeNull();
+    expect([...backend.map.keys()].some((k) => k.startsWith('e2ee.user.user-b'))).toBe(false);
+  });
+
+  it('never exposes the legacy cache while nobody has adopted the legacy identity', async () => {
+    const { root } = withLegacyCache();
+
+    expect(await root.forUser('user-a').getRoomKey('room-1', 1)).toBeNull();
+  });
+});

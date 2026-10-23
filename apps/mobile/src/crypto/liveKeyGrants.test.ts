@@ -19,6 +19,7 @@ function harness(opts: { ready?: boolean; connected?: boolean } = {}) {
   const loads: ReturnType<typeof deferred>[] = [];
   const timers: { fn: () => void; ms: number; cleared: boolean }[] = [];
   let requests = 0;
+  let now = 0;
 
   const deps: LiveKeyGrantsDeps = {
     serve: () => {
@@ -45,8 +46,14 @@ function harness(opts: { ready?: boolean; connected?: boolean } = {}) {
     clearTimer: (handle) => {
       (handle as { cleared: boolean }).cleared = true;
     },
+    now: () => now,
   };
-  const live = createLiveKeyGrants(deps, { baseDelayMs: 2_000, maxDelayMs: 30_000, maxAttempts: 6 });
+  const live = createLiveKeyGrants(deps, {
+    baseDelayMs: 2_000,
+    maxDelayMs: 30_000,
+    maxAttempts: 6,
+    minServeIntervalMs: 5_000,
+  });
   const flush = () => new Promise((r) => setTimeout(r, 0));
   const pendingTimers = () => timers.filter((t) => !t.cleared && !(t as { fired?: boolean }).fired);
   const fireNext = () => {
@@ -66,6 +73,7 @@ function harness(opts: { ready?: boolean; connected?: boolean } = {}) {
     requests: () => requests,
     setReady: (v: boolean) => (ready = v),
     setConnected: (v: boolean) => (connected = v),
+    advance: (ms: number) => (now += ms),
   };
 }
 
@@ -129,12 +137,69 @@ describe('createLiveKeyGrants', () => {
     h.live.onKeyRequested();
     h.live.onKeyRequested();
     expect(h.serves).toHaveLength(1);
+    h.advance(6_000);
     h.serves[0].resolve();
     await h.flush();
     expect(h.serves).toHaveLength(2);
     h.serves[1].resolve();
     await h.flush();
     expect(h.serves).toHaveLength(2);
+  });
+
+  it('serves for KEY_REQUEST at most once per interval per room; the last request still gets a trailing serve', async () => {
+    const h = harness({ ready: true });
+    h.live.onKeyRequested();
+    h.serves[0].resolve();
+    await h.flush();
+
+    h.advance(1_000);
+    h.live.onKeyRequested();
+    h.live.onKeyRequested();
+    expect(h.serves).toHaveLength(1);
+    const trailing = h.pendingTimers();
+    expect(trailing.map((t) => t.ms)).toEqual([4_000]);
+
+    h.advance(4_000);
+    h.fireNext();
+    expect(h.serves).toHaveLength(2);
+  });
+
+  it('serves at once when the interval has already passed', async () => {
+    const h = harness({ ready: true });
+    h.live.onKeyRequested();
+    h.serves[0].resolve();
+    await h.flush();
+    h.advance(5_000);
+    h.live.onKeyRequested();
+    expect(h.serves).toHaveLength(2);
+  });
+
+  it('stop cancels a pending trailing serve', async () => {
+    const h = harness({ ready: true });
+    h.live.onKeyRequested();
+    h.serves[0].resolve();
+    await h.flush();
+    h.live.onKeyRequested();
+    h.live.stop();
+    expect(h.pendingTimers()).toHaveLength(0);
+    expect(h.serves).toHaveLength(1);
+  });
+
+  it('load() and serve() share the single-flight runs with the live signals (initial load is not doubled)', async () => {
+    const h = harness();
+    const initial = h.live.load();
+    h.live.onKeyGranted();
+    expect(h.loads).toHaveLength(1);
+    h.loads[0].resolve();
+    await initial;
+    await h.flush();
+    expect(h.loads).toHaveLength(2); // one trailing run for the grant notice, not one per caller
+
+    const initialServe = h.live.serve();
+    h.live.onKeyRequested();
+    expect(h.serves).toHaveLength(1);
+    h.serves[0].resolve();
+    await initialServe;
   });
 
   it('a failed serve or load does not throw and does not stop the re-checks', async () => {

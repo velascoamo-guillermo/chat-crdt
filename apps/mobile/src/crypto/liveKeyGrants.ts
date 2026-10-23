@@ -29,6 +29,7 @@ export interface LiveKeyGrantsDeps {
   isReady: () => boolean;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+  now?: () => number;
 }
 
 export interface LiveKeyGrantsOptions {
@@ -36,6 +37,13 @@ export interface LiveKeyGrantsOptions {
   maxDelayMs?: number;
   /** Re-checks per gated stretch (start or reconnect); push still works after. */
   maxAttempts?: number;
+  /**
+   * Minimum gap between serves on this device for this room. Bounds the work
+   * a member can trigger by keeping a grant "pending" on purpose (each relay
+   * would otherwise mean a GET, a seal and a POST here). The last request in
+   * a window still gets a trailing serve.
+   */
+  minServeIntervalMs?: number;
 }
 
 export interface LiveKeyGrants {
@@ -49,6 +57,10 @@ export interface LiveKeyGrants {
   onReconnected(): void;
   /** Leaving the room (or rebuilding the cipher): no further work. */
   stop(): void;
+  /** The room-open load, through the same single-flight run as KEY_GRANTED. */
+  load(): Promise<void>;
+  /** The room-open serve, through the same throttled run as KEY_REQUEST. */
+  serve(): Promise<void>;
 }
 
 /** Runs `fn` one at a time; calls made meanwhile collapse into one trailing run. */
@@ -82,6 +94,8 @@ export function createLiveKeyGrants(deps: LiveKeyGrantsDeps, opts: LiveKeyGrants
   const baseDelayMs = opts.baseDelayMs ?? 2_000;
   const maxDelayMs = opts.maxDelayMs ?? 30_000;
   const maxAttempts = opts.maxAttempts ?? 8;
+  const minServeIntervalMs = opts.minServeIntervalMs ?? 5_000;
+  const now = deps.now ?? Date.now;
   const setTimer = deps.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms));
   const clearTimer = deps.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
 
@@ -90,8 +104,43 @@ export function createLiveKeyGrants(deps: LiveKeyGrantsDeps, opts: LiveKeyGrants
   let timer: unknown = null;
   const isStopped = () => stopped;
 
-  const serve = singleFlight(deps.serve, isStopped);
   const load = singleFlight(deps.load, isStopped);
+
+  // Serving: single-flight like load, plus a minimum interval between starts.
+  let serving: Promise<void> | null = null;
+  let serveAgain = false;
+  let lastServeAt = Number.NEGATIVE_INFINITY;
+  let serveTimer: unknown = null;
+  const serve = (): Promise<void> => {
+    if (stopped) return Promise.resolve();
+    if (serving) {
+      serveAgain = true;
+      return serving;
+    }
+    const wait = lastServeAt + minServeIntervalMs - now();
+    if (wait > 0) {
+      serveTimer ??= setTimer(() => {
+        serveTimer = null;
+        void serve();
+      }, wait);
+      return Promise.resolve();
+    }
+    lastServeAt = now();
+    serving = deps
+      .serve()
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        serving = null;
+        if (serveAgain) {
+          serveAgain = false;
+          void serve();
+        }
+      });
+    return serving;
+  };
 
   const cancelTimer = () => {
     if (timer !== null) clearTimer(timer);
@@ -138,6 +187,10 @@ export function createLiveKeyGrants(deps: LiveKeyGrantsDeps, opts: LiveKeyGrants
     stop() {
       stopped = true;
       cancelTimer();
+      if (serveTimer !== null) clearTimer(serveTimer);
+      serveTimer = null;
     },
+    load,
+    serve,
   };
 }

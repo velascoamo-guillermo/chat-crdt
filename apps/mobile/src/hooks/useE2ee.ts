@@ -143,14 +143,14 @@ export function useE2eeCipher(roomIdOrName: string): LibsodiumContentCipher | nu
     void (async () => {
       await ensureIdentityPublished(ctx, keyStore);
       if (cancelled) return;
-      await loadMyGrants();
+      // Through the controller's single-flight runs, so a KEY_GRANTED or
+      // KEY_REQUEST arriving meanwhile doesn't start a second, parallel run.
+      await live.load();
       if (cancelled) return;
 
       // Best-effort: serve pending grants for OTHER members this device
       // holds keys for (first-responder pattern — no admin gate).
-      await servePendingGrants(ctx, summary.id, keyStore).catch(() => undefined);
-
-      await refreshPendingForMe();
+      await live.serve();
     })()
       .catch(() => undefined) // best-effort key loading — never an unhandled rejection
       .then(() => {

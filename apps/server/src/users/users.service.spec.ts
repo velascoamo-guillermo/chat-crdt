@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -5,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 const mockPrisma = {
   user: {
     update: jest.fn(),
+    findUnique: jest.fn(),
   },
   roomKeyGrant: {
     deleteMany: jest.fn(),
@@ -75,6 +77,31 @@ describe('UsersService', () => {
 
       expect(mockPrisma.roomKeyGrant.deleteMany).toHaveBeenCalledWith({ where: { userId: 'user-1' } });
       expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+  // T15: lets a device compare its local identity with what's published,
+  // so a key replaced on another device is detected instead of overwritten.
+  describe('getPublicKey', () => {
+    it("returns the user's published key and fingerprint", async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ publicKey: 'pub', publicKeyFp: 'fp' });
+
+      await expect(service.getPublicKey('user-1')).resolves.toEqual({ publicKey: 'pub', publicKeyFp: 'fp' });
+      expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        select: { publicKey: true, publicKeyFp: true },
+      });
+    });
+
+    it('returns nulls when nothing has been published yet', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ publicKey: null, publicKeyFp: null });
+
+      await expect(service.getPublicKey('user-1')).resolves.toEqual({ publicKey: null, publicKeyFp: null });
+    });
+
+    it('throws NotFound for an unknown user', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.getPublicKey('ghost')).rejects.toThrow(NotFoundException);
     });
   });
 });

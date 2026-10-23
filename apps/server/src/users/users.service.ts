@@ -1,10 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface PublicKeyResult {
   publicKey: string;
   publicKeyFp: string;
+}
+
+export interface PublishedKey {
+  publicKey: string | null;
+  publicKeyFp: string | null;
 }
 
 @Injectable()
@@ -42,5 +47,18 @@ export class UsersService {
     ]);
 
     return { publicKey, publicKeyFp };
+  }
+
+  /**
+   * T15: what this user currently has published, so a device can check its
+   * local identity against it before using or republishing anything.
+   */
+  async getPublicKey(userId: string): Promise<PublishedKey> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { publicKey: true, publicKeyFp: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return { publicKey: user.publicKey, publicKeyFp: user.publicKeyFp };
   }
 }

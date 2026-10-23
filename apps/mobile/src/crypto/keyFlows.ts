@@ -27,33 +27,98 @@ async function authFetch<T>(ctx: KeyFlowsContext, path: string, init?: RequestIn
 }
 
 /**
- * Ensures this device has a published X25519 identity — generating one if
- * missing. Covers both users registered before ADR-010 shipped (lazy
- * publish on next login/app start, per amendment #6) and the initial
- * publish for anyone new; republish-on-reinstall reuses the same call once
- * the local keypair is known to be gone (see PUT /users/me/public-key
- * deleting stale grants server-side).
+ * The user a token was issued to (its JWT `sub`), used only to pick which
+ * local key namespace to read — the server still verifies the token on
+ * every request, and scoping by the same id it authenticates keeps the
+ * local identity in lockstep with the account the server sees.
+ */
+export function userIdFromToken(token: string): string {
+  const payload = token.split('.')[1];
+  if (!payload) throw new Error('E2EE: malformed auth token');
+  const b64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+  const parsed: unknown = JSON.parse(atob(b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=')));
+  const sub = parsed && typeof parsed === 'object' ? (parsed as { sub?: unknown }).sub : undefined;
+  if (typeof sub !== 'string' || sub.length === 0) throw new Error('E2EE: auth token has no subject');
+  return sub;
+}
+
+/**
+ * Outcome of reconciling this device's identity for the signed-in user with
+ * the server's published key:
+ * - `ok`: local keypair matches what's published.
+ * - `published`: the server had no key; this device's (existing or fresh) one was published.
+ * - `adopted-legacy`: the pre-T15 device-wide keypair matched this user's published key and now belongs to them.
+ * - `republished`: no local keypair but a different one published (reinstall / new device,
+ *   ADR-010 Multi-device): a fresh one replaced it, which drops this user's grants server-side.
+ * - `mismatch`: a local keypair exists but the server holds a different one (replaced on another
+ *   device). Neither side is touched; grants sealed to the server key won't unwrap here.
+ */
+export type IdentityStatus = 'ok' | 'published' | 'adopted-legacy' | 'republished' | 'mismatch';
+
+interface PublishedKeyDto {
+  publicKey: string | null;
+  publicKeyFp: string | null;
+}
+
+// Callers (_layout's auth effect, every E2EE room mount) can race; two
+// overlapping first-time publishes would each PUT a different keypair and
+// could persist the one the server didn't keep.
+const inFlight = new Map<string, Promise<IdentityStatus>>();
+
+/**
+ * Ensures the signed-in user has a published X25519 identity on this device
+ * (T15: one per user, not per device). Covers users registered before
+ * ADR-010 shipped (lazy publish on next login/app start, per amendment #6),
+ * fresh registers, and several accounts sharing one device.
  *
  * Publish-then-persist, deliberately in that order (code review round 1,
- * Important #5): persisting the keypair locally BEFORE the PUT succeeded
- * would make this function's own early-return (`if (existing) return`)
- * permanently skip retrying — a keypair that exists locally but was never
- * actually published (e.g. the PUT failed the very first time this ran) is
- * a stuck state with no recovery path, since nothing else ever calls this
- * again with a fresh keypair once `existing` is non-null. Persisting only
- * after a successful PUT means a failed attempt leaves no local trace, so
- * the next call starts clean and actually retries.
+ * Important #5): persisting a freshly generated keypair BEFORE the PUT
+ * succeeded would leave a local key the server never saw, and the next call
+ * would treat it as established. Persisting only after a successful PUT
+ * means a failed attempt leaves no local trace, so the next call retries.
  */
-export async function ensureIdentityPublished(ctx: KeyFlowsContext, keyStore: RoomKeyStore): Promise<void> {
-  const existing = await keyStore.getIdentity();
-  if (existing) return;
+export function ensureIdentityPublished(ctx: KeyFlowsContext, keyStore: RoomKeyStore): Promise<IdentityStatus> {
+  const userId = userIdFromToken(ctx.token);
+  const pending = inFlight.get(userId);
+  if (pending) return pending;
+  const run = reconcileIdentity(ctx, keyStore, userId).finally(() => inFlight.delete(userId));
+  inFlight.set(userId, run);
+  return run;
+}
+
+async function reconcileIdentity(ctx: KeyFlowsContext, keyStore: RoomKeyStore, userId: string): Promise<IdentityStatus> {
+  const store = keyStore.forUser(userId);
+  const published = await authFetch<PublishedKeyDto>(ctx, '/users/me/public-key');
+  const local = await store.getIdentity();
+
+  if (local) {
+    if (published.publicKey === local.publicKey) return 'ok';
+    if (published.publicKey === null) {
+      await putPublicKey(ctx, local.publicKey);
+      return 'published';
+    }
+    return 'mismatch';
+  }
+
+  // Legacy migration: the device-wide keypair is adopted only by the account
+  // whose published key proves it's theirs; anyone else gets a fresh one.
+  // The legacy entry itself is never written or removed here.
+  if (published.publicKey !== null) {
+    const legacy = await keyStore.getLegacyIdentity();
+    if (legacy && legacy.publicKey === published.publicKey) {
+      await store.setIdentity(legacy);
+      return 'adopted-legacy';
+    }
+  }
 
   const kp = sodium.crypto_box_keypair('base64');
-  await authFetch(ctx, '/users/me/public-key', {
-    method: 'PUT',
-    body: JSON.stringify({ publicKey: kp.publicKey }),
-  });
-  await keyStore.setIdentity({ publicKey: kp.publicKey, privateKey: kp.privateKey });
+  await putPublicKey(ctx, kp.publicKey);
+  await store.setIdentity({ publicKey: kp.publicKey, privateKey: kp.privateKey });
+  return published.publicKey === null ? 'published' : 'republished';
+}
+
+async function putPublicKey(ctx: KeyFlowsContext, publicKey: string): Promise<void> {
+  await authFetch(ctx, '/users/me/public-key', { method: 'PUT', body: JSON.stringify({ publicKey }) });
 }
 
 interface PendingGrantDto {
@@ -80,12 +145,13 @@ export async function servePendingGrants(
   roomId: string,
   keyStore: RoomKeyStore
 ): Promise<number> {
+  const store = keyStore.forUser(userIdFromToken(ctx.token));
   const pending = await authFetch<PendingGrantDto[]>(ctx, `/rooms/${roomId}/keys/pending`);
   if (pending.length === 0) return 0;
 
   const grants: { userId: string; keyId: number; wrappedKey: string; recipientKeyFp: string }[] = [];
   for (const p of pending) {
-    const keyBase64 = await keyStore.getRoomKey(roomId, p.keyId);
+    const keyBase64 = await store.getRoomKey(roomId, p.keyId);
     if (!keyBase64) continue; // this device doesn't hold that epoch either
 
     const keyBytes = sodium.from_base64(keyBase64);
@@ -112,7 +178,8 @@ export async function fetchAndLoadMyGrants(
   keyStore: RoomKeyStore,
   cipher: LibsodiumContentCipher
 ): Promise<void> {
-  const identity = await keyStore.getIdentity();
+  const store = keyStore.forUser(userIdFromToken(ctx.token));
+  const identity = await store.getIdentity();
   if (!identity) return; // no identity yet — nothing to unwrap with
 
   const myGrants = await authFetch<MyGrantDto[]>(ctx, `/rooms/${roomId}/keys`);
@@ -127,14 +194,14 @@ export async function fetchAndLoadMyGrants(
     // unwrap — that would turn a single-epoch problem into "this member
     // can't decrypt this room at all".
     try {
-      const cached = await keyStore.getRoomKey(roomId, grant.keyId);
+      const cached = await store.getRoomKey(roomId, grant.keyId);
       if (cached) {
         cipher.setKey(grant.keyId, sodium.from_base64(cached));
         continue;
       }
       const wrapped = sodium.from_base64(grant.wrappedKey);
       const keyBytes = sodium.crypto_box_seal_open(wrapped, publicKey, privateKey);
-      await keyStore.cacheRoomKey(roomId, grant.keyId, sodium.to_base64(keyBytes));
+      await store.cacheRoomKey(roomId, grant.keyId, sodium.to_base64(keyBytes));
       cipher.setKey(grant.keyId, keyBytes);
     } catch {
       continue;
@@ -171,6 +238,7 @@ export async function enableOrRotateRoomKey(
   keyStore: RoomKeyStore,
   cipher: LibsodiumContentCipher
 ): Promise<{ currentKeyId: number }> {
+  const store = keyStore.forUser(userIdFromToken(ctx.token));
   const newKeyId = expectedCurrentKeyId + 1;
   const roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen('base64');
   const roomKeyBytes = sodium.from_base64(roomKey);
@@ -186,7 +254,7 @@ export async function enableOrRotateRoomKey(
     body: JSON.stringify({ claimEpoch: { expectedCurrentKeyId }, grants }),
   });
 
-  await keyStore.cacheRoomKey(roomId, newKeyId, roomKey);
+  await store.cacheRoomKey(roomId, newKeyId, roomKey);
   cipher.setKey(newKeyId, roomKeyBytes);
 
   return result;

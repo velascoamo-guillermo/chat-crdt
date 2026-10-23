@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach } from 'bun:test';
-import { RoomKeyStore, type SecureKeyValueStore } from './keyStore';
+import { RoomKeyStore, type SecureKeyValueStore, type UserKeyStore } from './keyStore';
 
-function makeMemoryBackend(): SecureKeyValueStore {
+function makeMemoryBackend(): SecureKeyValueStore & { map: Map<string, string> } {
   const map = new Map<string, string>();
   return {
+    map,
     async getItem(key) {
       return map.get(key) ?? null;
     },
@@ -16,11 +17,13 @@ function makeMemoryBackend(): SecureKeyValueStore {
   };
 }
 
-describe('RoomKeyStore', () => {
-  let store: RoomKeyStore;
+describe('RoomKeyStore.forUser', () => {
+  let backend: ReturnType<typeof makeMemoryBackend>;
+  let store: UserKeyStore;
 
   beforeEach(() => {
-    store = new RoomKeyStore(makeMemoryBackend());
+    backend = makeMemoryBackend();
+    store = new RoomKeyStore(backend).forUser('user-a');
   });
 
   it('returns null identity when none has been set', async () => {
@@ -68,5 +71,58 @@ describe('RoomKeyStore', () => {
 
     expect(await store.getIdentity()).toBeNull();
     expect(await store.getRoomKey('room-1', 1)).toBe('key-1');
+  });
+
+  // T15: one device, several accounts.
+  it("never returns another user's identity", async () => {
+    await store.setIdentity({ publicKey: 'pub-a', privateKey: 'priv-a' });
+    const storeB = new RoomKeyStore(backend).forUser('user-b');
+
+    expect(await storeB.getIdentity()).toBeNull();
+    await storeB.setIdentity({ publicKey: 'pub-b', privateKey: 'priv-b' });
+    expect(await store.getIdentity()).toEqual({ publicKey: 'pub-a', privateKey: 'priv-a' });
+    expect(await storeB.getIdentity()).toEqual({ publicKey: 'pub-b', privateKey: 'priv-b' });
+  });
+
+  it("never returns another user's cached room keys or epochs", async () => {
+    await store.cacheRoomKey('room-1', 1, 'key-a');
+    const storeB = new RoomKeyStore(backend).forUser('user-b');
+
+    expect(await storeB.getRoomKey('room-1', 1)).toBeNull();
+    expect(await storeB.getCachedCurrentEpoch('room-1')).toBeNull();
+  });
+
+  it("clearIdentity only clears the scoped user's identity", async () => {
+    await store.setIdentity({ publicKey: 'pub-a', privateKey: 'priv-a' });
+    const storeB = new RoomKeyStore(backend).forUser('user-b');
+    await storeB.setIdentity({ publicKey: 'pub-b', privateKey: 'priv-b' });
+
+    await storeB.clearIdentity();
+
+    expect(await store.getIdentity()).toEqual({ publicKey: 'pub-a', privateKey: 'priv-a' });
+  });
+
+  it('does not read the legacy unscoped identity as the user identity', async () => {
+    backend.map.set('e2ee.identity', JSON.stringify({ publicKey: 'legacy-pub', privateKey: 'legacy-priv' }));
+    expect(await store.getIdentity()).toBeNull();
+  });
+
+  it.each(['', 'a.b', 'a/b', 'a b'])('rejects a user id that could escape its namespace: %p', (bad) => {
+    expect(() => new RoomKeyStore(backend).forUser(bad)).toThrow();
+  });
+});
+
+describe('RoomKeyStore.getLegacyIdentity', () => {
+  it('reads the pre-T15 device-wide identity without removing it', async () => {
+    const backend = makeMemoryBackend();
+    backend.map.set('e2ee.identity', JSON.stringify({ publicKey: 'legacy-pub', privateKey: 'legacy-priv' }));
+    const root = new RoomKeyStore(backend);
+
+    expect(await root.getLegacyIdentity()).toEqual({ publicKey: 'legacy-pub', privateKey: 'legacy-priv' });
+    expect(backend.map.has('e2ee.identity')).toBe(true);
+  });
+
+  it('returns null when there is no legacy identity', async () => {
+    expect(await new RoomKeyStore(makeMemoryBackend()).getLegacyIdentity()).toBeNull();
   });
 });

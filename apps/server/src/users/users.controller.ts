@@ -1,4 +1,4 @@
-import { Controller, Put, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Put, Body, UseGuards, Request } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { UsersService } from './users.service';
 import { SetPublicKeyDto } from './dto/set-public-key.dto';
@@ -19,5 +19,11 @@ export class UsersController {
   @Put('me/public-key')
   setPublicKey(@Body() dto: SetPublicKeyDto, @Request() req: { user: { userId: string } }) {
     return this.users.setPublicKey(req.user.userId, dto.publicKey);
+  }
+
+  // T15: the device-side mismatch check (local identity vs published key).
+  @Get('me/public-key')
+  getPublicKey(@Request() req: { user: { userId: string } }) {
+    return this.users.getPublicKey(req.user.userId);
   }
 }

@@ -44,6 +44,15 @@ export const WsMsgType = {
   E2EE_REJECTED: 20,
   /** T10, server -> client: the room is E2EE at this epoch. Payload: varUint keyId. */
   ROOM_EPOCH: 21,
+  /**
+   * T16, no payload. Client -> server: "I'm missing a grant for this room".
+   * Server -> client: "a member of this room is missing a grant; serve it if
+   * you hold the key". Relayed only to other users' sockets in the room, and
+   * only when the requester really has a pending grant.
+   */
+  KEY_REQUEST: 22,
+  /** T16, server -> client, no payload: a grant for you landed in this room; load it. */
+  KEY_GRANTED: 23,
 } as const;
 export type WsMsgType = typeof WsMsgType[keyof typeof WsMsgType];
 

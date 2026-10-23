@@ -9,6 +9,8 @@ const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
 const MSG_E2EE_REJECTED = WsMsgType.E2EE_REJECTED;
 const MSG_ROOM_EPOCH = WsMsgType.ROOM_EPOCH;
+const MSG_KEY_REQUEST = WsMsgType.KEY_REQUEST;
+const MSG_KEY_GRANTED = WsMsgType.KEY_GRANTED;
 const MAX_RETRY_DELAY_MS = 30_000;
 const BASE_RETRY_DELAY_MS = 1_000;
 
@@ -42,6 +44,10 @@ export interface WebSocketProviderConfig {
    * the app should discard the local room doc and resync from scratch.
    */
   onUnrecoverableE2eeRejection?: (rejection: { keyId: number }) => void;
+  /** T16: another member of this room is missing a grant; serve it if this device holds the key. */
+  onKeyRequested?: () => void;
+  /** T16: a grant for this user landed in this room; load it. */
+  onKeyGranted?: () => void;
   /** Called once, when the first sync step2 from the server has been applied. */
   onSynced?: () => void;
   /** Test-only hook: intercepts outgoing binary messages instead of opening a real WebSocket */
@@ -206,6 +212,10 @@ export class WebSocketProvider {
         }
       } else if (msgType === MSG_ROOM_EPOCH) {
         this.config.onRoomEpoch?.(decoding.readVarUint(decoder));
+      } else if (msgType === MSG_KEY_REQUEST) {
+        this.config.onKeyRequested?.();
+      } else if (msgType === MSG_KEY_GRANTED) {
+        this.config.onKeyGranted?.();
       }
     } catch {
       // swallow malformed messages
@@ -265,6 +275,19 @@ export class WebSocketProvider {
     ]);
     encoding.writeVarUint8Array(encoder, update);
     this.send(encoding.toUint8Array(encoder));
+  }
+
+  /**
+   * T16: tells the server this client is missing a grant for the room, so it
+   * asks the members online here to serve it. Not queued: returns false when
+   * not connected, and the caller retries on its own schedule.
+   */
+  requestKey(): boolean {
+    if (this.destroyed || this.status !== 'connected') return false;
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, MSG_KEY_REQUEST);
+    this.send(encoding.toUint8Array(encoder));
+    return true;
   }
 
   getStatus(): ProviderStatus {

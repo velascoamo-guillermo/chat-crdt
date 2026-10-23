@@ -17,17 +17,28 @@ import type Redis from 'ioredis';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoomsService } from '../rooms/rooms.service';
+import { RoomKeysService } from '../rooms/room-keys.service';
 import { RoomState } from './room-state';
+import { checkEnvelopedUpdate } from './e2ee-update-gate';
 import { MetricsService } from '../metrics/metrics.service';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
+import { WsMsgType } from '@chat-crdt/shared';
 
 const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
+const MSG_E2EE_REJECTED = WsMsgType.E2EE_REJECTED;
+const MSG_ROOM_EPOCH = WsMsgType.ROOM_EPOCH;
 const ROOM_GC_DELAY_MS = 30_000;
 const PERSIST_DEBOUNCE_MS = 5_000;
 
 const UPDATE_CHANNEL_PREFIX = 'room:update:';
 const AWARENESS_CHANNEL_PREFIX = 'room:awareness:';
+const EPOCH_CHANNEL_PREFIX = 'room:epoch:'; // + Prisma Room.id
+
+// y-protocols/sync message types carrying a doc update (step1 only carries a
+// state vector).
+const SYNC_STEP2 = 1;
+const SYNC_UPDATE = 2;
 
 // DoS guards: reject oversized frames and clients that flood the socket.
 const MAX_WS_MESSAGE_BYTES = 64 * 1024; // 64 KiB per frame
@@ -41,6 +52,20 @@ interface RedisPayload {
   origin: string;
   update: string; // base64 incremental update
 }
+
+interface EpochPayload {
+  origin: string;
+  keyId: number;
+}
+
+interface RejectionState {
+  signature: string;
+  repeats: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const REJECT_RESYNC_BASE_MS = 1_000;
+const REJECT_RESYNC_MAX_MS = 30_000;
 
 interface RateState {
   count: number;
@@ -60,12 +85,21 @@ export class SyncGateway
   private readonly clientRoom = new WeakMap<WebSocket, string>();
   private readonly persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly clientRate = new WeakMap<WebSocket, RateState>();
+  // T10: last refused update per client, so an identical re-send (a client
+  // that can't repair its state) gets the step1 re-ask on backoff instead of
+  // a tight reject/resync loop.
+  private readonly lastRejection = new WeakMap<WebSocket, RejectionState>();
   // Awareness clientIDs announced by each socket, so we can clear them on disconnect.
   private readonly awarenessIds = new WeakMap<WebSocket, Set<number>>();
   // Liveness flag per socket: true on connect + on every pong. A sweep that
   // finds `false` evicts the socket (it missed the previous ping's pong).
   private readonly alive = new WeakMap<WebSocket, boolean>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  // T10: highest epoch seen per Prisma Room.id from claim events, kept even
+  // for rooms not (fully) loaded here — a claim can commit between a room's
+  // DB read and its dbId being known, and loadRoomState takes the max with
+  // this so that event isn't lost. One small entry per E2EE room.
+  private readonly epochByDbId = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -74,16 +108,27 @@ export class SyncGateway
     @Inject('REDIS_PUB') private readonly pub: Redis,
     @Inject('REDIS_SUB') private readonly sub: Redis,
     private readonly metrics: MetricsService,
+    private readonly roomKeys: RoomKeysService,
   ) {}
 
   onModuleInit() {
-    this.sub.psubscribe(`${UPDATE_CHANNEL_PREFIX}*`, `${AWARENESS_CHANNEL_PREFIX}*`);
+    this.sub.psubscribe(
+      `${UPDATE_CHANNEL_PREFIX}*`,
+      `${AWARENESS_CHANNEL_PREFIX}*`,
+      `${EPOCH_CHANNEL_PREFIX}*`,
+    );
     this.sub.on('pmessage', (_pattern: string, channel: string, message: string) => {
-      const payload: RedisPayload = JSON.parse(message);
+      const parsed: unknown = JSON.parse(message);
 
       // Skip messages this instance published — local clients already received them.
-      if (payload.origin === this.instanceId) return;
+      if ((parsed as { origin?: unknown }).origin === this.instanceId) return;
 
+      if (channel.startsWith(EPOCH_CHANNEL_PREFIX)) {
+        this.raiseEpoch(channel.slice(EPOCH_CHANNEL_PREFIX.length), (parsed as EpochPayload).keyId);
+        return;
+      }
+
+      const payload = parsed as RedisPayload;
       if (channel.startsWith(UPDATE_CHANNEL_PREFIX)) {
         const room = this.rooms.get(channel.slice(UPDATE_CHANNEL_PREFIX.length));
         if (!room) return;
@@ -101,6 +146,38 @@ export class SyncGateway
         );
       }
     });
+
+    // T10: an epoch claimed through this instance's REST API — apply it
+    // locally, then tell the other instances.
+    this.roomKeys.onEpochAdvanced((dbId, keyId) => {
+      this.raiseEpoch(dbId, keyId);
+      const payload: EpochPayload = { origin: this.instanceId, keyId };
+      // Pub/sub is at-most-once: a lost epoch leaves other instances' already
+      // loaded copies of this room ungated until they reload it (see raiseEpoch).
+      this.pub
+        .publish(`${EPOCH_CHANNEL_PREFIX}${dbId}`, JSON.stringify(payload))
+        .catch((err: Error) => this.logger.warn(`Failed to publish room epoch: ${err.message}`));
+    });
+  }
+
+  /**
+   * Raises the epoch of every loaded copy of a room and pushes it to that
+   * room's clients, so a member already in the room gates its composer right
+   * away instead of after its next refresh (T10). The window this leaves on
+   * OTHER instances is unbounded, not "a few ms": Redis pub/sub is
+   * at-most-once, and nothing re-reads the epoch from the DB for a room that
+   * stays loaded — a missed room:epoch message leaves it ungated until it is
+   * GC'd and reloaded. Defense in depth only; the client gate is primary.
+   */
+  private raiseEpoch(dbId: string, keyId: number): void {
+    if (typeof keyId !== 'number') return;
+    this.epochByDbId.set(dbId, Math.max(this.epochByDbId.get(dbId) ?? 0, keyId));
+    for (const room of this.rooms.values()) {
+      if (room.dbId !== dbId || keyId <= room.currentKeyId) continue;
+      room.currentKeyId = keyId;
+      const frame = encodeRoomEpoch(keyId);
+      for (const client of room.clients) client.send(frame);
+    }
   }
 
   afterInit(server: Server): void {
@@ -154,6 +231,12 @@ export class SyncGateway
     // Heartbeat liveness: alive on connect, re-armed on every pong.
     this.alive.set(client, true);
     client.on('pong', () => this.alive.set(client, true));
+
+    // T10: tell the client the room is E2EE before anything else, so a stale
+    // cached summary can't keep its composer in plaintext mode.
+    if (room.currentKeyId > 0 && room.roomId !== 'default') {
+      client.send(encodeRoomEpoch(room.currentKeyId));
+    }
 
     // Step 1 — send server state vector so client can compute the diff it needs to send us
     const enc1 = encoding.createEncoder();
@@ -253,6 +336,25 @@ export class SyncGateway
 
       if (msgType === MSG_SYNC) {
         this.metrics.incMessages('sync');
+        const rejected = this.plaintextIntoE2eeRoom(room, decoder);
+        if (rejected) {
+          // Not applied, so never broadcast, published or persisted. Never
+          // log the update itself — it holds the plaintext.
+          this.metrics.incE2eeRejectedUpdates();
+          this.logger.warn(
+            `Rejected sync update with a non-E2E1 message in E2EE room "${room.roomId}" ` +
+              `(epoch ${room.currentKeyId})`,
+          );
+          // Recovery (T10 review I1): the whole update was refused, including
+          // any enveloped messages queued alongside the plaintext. Name the
+          // offending message ids (never their content) so the client deletes
+          // them locally, then ask for its state again: its next step2 carries
+          // the deleted items as content-less structs and everything else
+          // lands, instead of the same step2 bouncing on every reconnect.
+          client.send(encodeE2eeRejected(room.currentKeyId, rejected.rejectedMessageIds));
+          this.askForResync(client, room, data);
+          return;
+        }
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MSG_SYNC);
         // readSyncMessage applies the client's update to room.doc with `client`
@@ -273,6 +375,57 @@ export class SyncGateway
     } catch (err: any) {
       this.logger.error(`Error handling message: ${err.message}`);
     }
+  }
+
+  /**
+   * T10: after a rejection, ask the client for its state again (sync step1).
+   * The same refused frame arriving again means the client couldn't repair
+   * it; re-asking at once would just loop, so repeats wait 1s, 2s, 4s… (max
+   * 30s), and only the latest pending re-ask fires.
+   */
+  private askForResync(client: WebSocket, room: RoomState, refused: Buffer): void {
+    const signature = createHash('sha256').update(refused).digest('hex');
+    const previous = this.lastRejection.get(client);
+    if (previous?.timer) clearTimeout(previous.timer);
+    const repeats = previous?.signature === signature ? previous.repeats + 1 : 0;
+    const state: RejectionState = { signature, repeats, timer: null };
+    this.lastRejection.set(client, state);
+
+    const sendStep1 = () => {
+      state.timer = null;
+      if (client.readyState !== WebSocket.OPEN) return;
+      const step1 = encoding.createEncoder();
+      encoding.writeVarUint(step1, MSG_SYNC);
+      syncProtocol.writeSyncStep1(step1, room.doc);
+      client.send(encoding.toUint8Array(step1));
+    };
+    if (repeats === 0) {
+      sendStep1();
+      return;
+    }
+    const delay = Math.min(REJECT_RESYNC_BASE_MS * 2 ** (repeats - 1), REJECT_RESYNC_MAX_MS);
+    state.timer = setTimeout(sendStep1, delay);
+    state.timer.unref?.();
+  }
+
+  /**
+   * T10 defense in depth: in a room whose currentKeyId > 0, a sync step2 or
+   * update that inserts any message without a well-formed E2E1 envelope is
+   * rejected whole; returns the offending message ids, or null to accept.
+   * Peeks on a clone of the decoder so the caller still reads the message
+   * from the start. The 'default' lobby is always plaintext (ADR-010
+   * amendment #3), so it's never gated.
+   */
+  private plaintextIntoE2eeRoom(
+    room: RoomState,
+    decoder: decoding.Decoder,
+  ): { rejectedMessageIds: string[] } | null {
+    if (room.currentKeyId <= 0 || room.roomId === 'default') return null;
+    const peek = decoding.clone(decoder);
+    const syncType = decoding.readVarUint(peek);
+    if (syncType !== SYNC_STEP2 && syncType !== SYNC_UPDATE) return null;
+    const result = checkEnvelopedUpdate(decoding.readVarUint8Array(peek));
+    return result.ok ? null : result;
   }
 
   /** Fixed-window per-client message rate limiter. */
@@ -404,14 +557,24 @@ export class SyncGateway
 
   private async loadRoomState(room: RoomState): Promise<void> {
     const dbRoom = await this.prisma.room.findUnique({ where: { name: room.roomId } });
+    if (dbRoom) {
+      room.dbId = dbRoom.id;
+      // max(): an epoch claim may have committed after the read above.
+      room.currentKeyId = Math.max(
+        room.currentKeyId,
+        dbRoom.currentKeyId,
+        this.epochByDbId.get(dbRoom.id) ?? 0,
+      );
+    }
     if (dbRoom?.yjsState) {
       Y.applyUpdate(room.doc, new Uint8Array(dbRoom.yjsState));
     } else {
-      await this.prisma.room.upsert({
+      const upserted = await this.prisma.room.upsert({
         where: { name: room.roomId },
         create: { name: room.roomId },
         update: {},
       });
+      room.dbId ??= upserted?.id ?? null;
     }
   }
 
@@ -448,4 +611,22 @@ export class SyncGateway
       );
     }
   }
+}
+
+/** T10 ROOM_EPOCH frame: varUint type, varUint keyId. */
+function encodeRoomEpoch(keyId: number): Uint8Array {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, MSG_ROOM_EPOCH);
+  encoding.writeVarUint(encoder, keyId);
+  return encoding.toUint8Array(encoder);
+}
+
+/** T10 E2EE_REJECTED frame: varUint type, varUint keyId, varUint n, n varString message ids. */
+function encodeE2eeRejected(keyId: number, messageIds: string[]): Uint8Array {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, MSG_E2EE_REJECTED);
+  encoding.writeVarUint(encoder, keyId);
+  encoding.writeVarUint(encoder, messageIds.length);
+  for (const id of messageIds) encoding.writeVarString(encoder, id);
+  return encoding.toUint8Array(encoder);
 }

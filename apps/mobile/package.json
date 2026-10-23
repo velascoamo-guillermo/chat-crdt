@@ -9,7 +9,7 @@
     "build": "expo export",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && tsc -p .maestro/scripts/tsconfig.json && tsc -p tsconfig.test.json",
-    "test": "bun test src/crypto"
+    "test": "bun test src/crypto src/store src/utils"
   },
   "dependencies": {
     "@chat-crdt/shared": "workspace:*",

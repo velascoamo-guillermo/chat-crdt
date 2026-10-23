@@ -9,12 +9,23 @@
  * key yet). The UI must never let that throw happen — this is the pure
  * decision the composer/screen gates on, kept separate from any React state
  * so it's unit-testable without the RN/Hermes runtime.
+ *
+ * T10: the room's E2EE state comes from resolveRoomE2eeState, not from the
+ * cached currentKeyId alone (that can be stale — see roomE2eeState.ts).
  */
+import type { RoomE2eeState } from './roomE2eeState';
+
 export interface EpochHoldingCipher {
   hasKey(keyId: number): boolean;
 }
 
-export function isComposerReady(currentKeyId: number, cipher: EpochHoldingCipher | null): boolean {
-  if (currentKeyId <= 0) return true; // room isn't E2EE-enabled — always plaintext-ready
+export function isComposerReady(
+  e2eeState: RoomE2eeState,
+  currentKeyId: number,
+  cipher: EpochHoldingCipher | null
+): boolean {
+  if (e2eeState === 'plaintext') return true; // server-confirmed E2EE-off — always plaintext-ready
+  // T10: 'unknown' (summary refresh still in flight) is gated, never plaintext.
+  if (e2eeState === 'unknown' || currentKeyId <= 0) return false;
   return cipher !== null && cipher.hasKey(currentKeyId);
 }

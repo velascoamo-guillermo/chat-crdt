@@ -38,6 +38,13 @@ interface ChatState {
   wsStatusByRoom: Record<string, WsStatus>;
   mountCounts: Record<string, number>;
   roomCryptoByRoom: Record<string, RoomCryptoState | undefined>;
+  /**
+   * T10: text the server refused because it was sent in plaintext into an
+   * E2EE room (already retracted from the doc). The room screen puts it back
+   * in the composer and tells the user. Survives clearRoom on purpose: it's
+   * the user's unsent text, not room data. `seq` makes each rejection distinct.
+   */
+  e2eeRejectionByRoom: Record<string, E2eeRejection | undefined>;
   setMessages: (roomId: string, messages: MessageDto[]) => void;
   setWsStatus: (roomId: string, status: WsStatus) => void;
   registerMount: (roomId: string) => void;
@@ -45,13 +52,40 @@ interface ChatState {
   setRoomCipher: (roomId: string, cipher: LibsodiumContentCipher) => void;
   setPendingEpochsForMe: (roomId: string, epochs: Set<number>) => void;
   bumpRoomCrypto: (roomId: string) => void;
+  noteE2eeRejection: (roomId: string, text: string, kind?: E2eeRejection['kind']) => void;
+  clearE2eeRejection: (roomId: string) => void;
+  /** Logout: the next account on the device must not inherit refused text. */
+  clearAllE2eeRejections: () => void;
+  /**
+   * Returns the ids not restored before and marks them restored. The same
+   * refused message can bounce twice (old engine, then again after the engine
+   * is rebuilt from the persisted doc); its text must go back only once.
+   */
+  claimRestoredMessages: (ids: readonly string[]) => string[];
 }
+
+export interface E2eeRejection {
+  text: string;
+  seq: number;
+  /**
+   * 'restored': our refused text, back in the composer. 'resynced': the
+   * room's local copy couldn't be repaired and was reloaded from the server
+   * (our own encrypted messages were put back).
+   */
+  kind: 'restored' | 'resynced';
+}
+
+let e2eeRejectionSeq = 0;
+// Message ids (ULIDs, unique across rooms) whose refused text was already
+// handed back to the composer this session.
+const restoredMessageIds = new Set<string>();
 
 export const useChatStore = create<ChatState>((set) => ({
   messagesByRoom: {},
   wsStatusByRoom: {},
   mountCounts: {},
   roomCryptoByRoom: {},
+  e2eeRejectionByRoom: {},
   setMessages: (roomId, messages) =>
     set((s) => ({ messagesByRoom: { ...s.messagesByRoom, [roomId]: messages } })),
   setWsStatus: (roomId, wsStatus) =>
@@ -98,7 +132,31 @@ export const useChatStore = create<ChatState>((set) => ({
         roomCryptoByRoom: { ...s.roomCryptoByRoom, [roomId]: { ...existing, version: existing.version + 1 } },
       };
     }),
+  noteE2eeRejection: (roomId, text, kind = 'restored') =>
+    // Each rejection carries only its own text; the composer appends it to
+    // whatever draft is already there, so nothing typed is lost.
+    set((s) => ({
+      e2eeRejectionByRoom: { ...s.e2eeRejectionByRoom, [roomId]: { text, kind, seq: ++e2eeRejectionSeq } },
+    })),
+  clearAllE2eeRejections: () => {
+    restoredMessageIds.clear();
+    set({ e2eeRejectionByRoom: {} });
+  },
+  claimRestoredMessages: (ids) => {
+    const fresh = ids.filter((id) => !restoredMessageIds.has(id));
+    for (const id of fresh) restoredMessageIds.add(id);
+    return fresh;
+  },
+  clearE2eeRejection: (roomId) =>
+    set((s) => {
+      const { [roomId]: _rejection, ...e2eeRejectionByRoom } = s.e2eeRejectionByRoom;
+      return { e2eeRejectionByRoom };
+    }),
 }));
+
+export function useRoomE2eeRejection(roomId: string): E2eeRejection | undefined {
+  return useChatStore((s) => s.e2eeRejectionByRoom[roomId]);
+}
 
 const EMPTY_PENDING_EPOCHS: Set<number> = new Set();
 

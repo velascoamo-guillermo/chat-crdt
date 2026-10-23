@@ -2,10 +2,13 @@ import * as syncProtocol from 'y-protocols/sync';
 import * as awarenessProtocol from 'y-protocols/awareness';
 import * as encoding from 'lib0/encoding';
 import * as decoding from 'lib0/decoding';
+import { WsMsgType, type MessageDto } from '@chat-crdt/shared';
 import { SyncEngine } from './SyncEngine';
 
 const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
+const MSG_E2EE_REJECTED = WsMsgType.E2EE_REJECTED;
+const MSG_ROOM_EPOCH = WsMsgType.ROOM_EPOCH;
 const MAX_RETRY_DELAY_MS = 30_000;
 const BASE_RETRY_DELAY_MS = 1_000;
 
@@ -23,6 +26,24 @@ export interface WebSocketProviderConfig {
    * app should log out or refresh the token instead.
    */
   onAuthError?: (code: number) => void;
+  /**
+   * T10: the server refused messages this client sent into an E2EE room in
+   * plaintext. They have already been retracted from the doc (so the server's
+   * follow-up step1 gets a clean step2); `retracted` lets the app restore the
+   * text to the composer and tell the user.
+   */
+  onE2eeRejected?: (rejection: { keyId: number; retracted: MessageDto[] }) => void;
+  /** T10: the server says this room is E2EE at `keyId` (on join, and live on enable). */
+  onRoomEpoch?: (keyId: number) => void;
+  /**
+   * T10: the server refused this client's state for something it can't
+   * retract (another user's message, or an item with no id). The provider
+   * has stopped answering the server's step1 so the reject/resync loop ends;
+   * the app should discard the local room doc and resync from scratch.
+   */
+  onUnrecoverableE2eeRejection?: (rejection: { keyId: number }) => void;
+  /** Called once, when the first sync step2 from the server has been applied. */
+  onSynced?: () => void;
   /** Test-only hook: intercepts outgoing binary messages instead of opening a real WebSocket */
   _testSend?: (data: Uint8Array) => void;
 }
@@ -39,6 +60,13 @@ export class WebSocketProvider {
   private retryTimeout: ReturnType<typeof setTimeout> | null = null;
   private retryCount = 0;
   private destroyed = false;
+  private synced = false;
+  // T10: ids retracted this session — a second rejection naming one of them
+  // (e.g. the queued update bounced as well as the step2) is not new damage.
+  private readonly retractedIds = new Set<string>();
+  // T10: set when a rejection can't be repaired in place; while set, the
+  // client stops pushing its state, which would only be refused again.
+  private stateRefused = false;
   private readonly docUpdateHandler: (update: Uint8Array, origin: unknown) => void;
   readonly awareness: awarenessProtocol.Awareness;
 
@@ -53,6 +81,7 @@ export class WebSocketProvider {
     this.docUpdateHandler = (update: Uint8Array, origin: unknown) => {
       if (this.destroyed) return;
       if (origin === this) return; // skip remote updates applied by us
+      if (this.stateRefused) return; // the app is about to discard this doc
       if (this.status === 'connected') {
         this.sendUpdate(update);
       } else {
@@ -73,6 +102,12 @@ export class WebSocketProvider {
     if (this.destroyed) return;
     this.setStatus('connected');
     this.flush();
+  }
+
+  /** Test-only: deliver a frame as if the server had sent it. */
+  simulateServerMessage(data: Uint8Array): void {
+    if (this.destroyed) return;
+    this.handleServerMessage(data);
   }
 
   private connect(): void {
@@ -140,13 +175,37 @@ export class WebSocketProvider {
       if (msgType === MSG_SYNC) {
         const encoder = encoding.createEncoder();
         encoding.writeVarUint(encoder, MSG_SYNC);
-        syncProtocol.readSyncMessage(decoder, encoder, this.engine.doc, this);
-        if (encoding.length(encoder) > 1) {
+        const syncType = syncProtocol.readSyncMessage(decoder, encoder, this.engine.doc, this);
+        if (encoding.length(encoder) > 1 && !this.stateRefused) {
           this.send(encoding.toUint8Array(encoder));
+        }
+        if (syncType === syncProtocol.messageYjsSyncStep2 && !this.synced) {
+          this.synced = true;
+          this.config.onSynced?.();
         }
       } else if (msgType === MSG_AWARENESS) {
         const update = decoding.readVarUint8Array(decoder);
         awarenessProtocol.applyAwarenessUpdate(this.awareness, update, this);
+      } else if (msgType === MSG_E2EE_REJECTED) {
+        const keyId = decoding.readVarUint(decoder);
+        const count = decoding.readVarUint(decoder);
+        const ids: string[] = [];
+        for (let i = 0; i < count; i++) ids.push(decoding.readVarString(decoder));
+        // Retract synchronously, before the server's follow-up step1 is
+        // handled, so the step2 we answer it with no longer holds them.
+        const retracted = this.engine.retractMessages(ids);
+        for (const m of retracted) this.retractedIds.add(m.id);
+        const repaired = ids.length > 0 && ids.every((id) => this.retractedIds.has(id));
+        if (retracted.length > 0) this.config.onE2eeRejected?.({ keyId, retracted });
+        if (!repaired) {
+          // Our step2 would carry the same refused item again: stop pushing
+          // state (ends the loop) and let the app rebuild the room.
+          this.stateRefused = true;
+          this.pendingUpdates = [];
+          this.config.onUnrecoverableE2eeRejection?.({ keyId });
+        }
+      } else if (msgType === MSG_ROOM_EPOCH) {
+        this.config.onRoomEpoch?.(decoding.readVarUint(decoder));
       }
     } catch {
       // swallow malformed messages

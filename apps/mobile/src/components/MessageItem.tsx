@@ -5,7 +5,7 @@ import { useAuthStore } from "../store/auth.store";
 import { useUITheme } from "../ui";
 import { theme } from "../ui";
 import { useRoomCrypto, useRoomPendingEpochsForMe } from "../store/chat.store";
-import { useRoomsStore } from "../store/rooms.store";
+import { useRoomE2eeState } from "../store/rooms.store";
 import { resolveMessageRenderState } from "../crypto/renderState";
 
 interface Props {
@@ -25,8 +25,9 @@ export const MessageItem = memo(function MessageItem({ message }: Props) {
   // message.roomId is the room's slug/name (same identifier useE2eeCipher and
   // the [roomId] route use), not the server's RoomSummary.id — matches how
   // roomCryptoByRoom itself is keyed (setRoomCipher(roomIdOrName, ...)).
-  const roomIsE2eeEnabled =
-    (useRoomsStore((s) => s.rooms.find((r) => r.name === message.roomId)?.currentKeyId) ?? 0) > 0;
+  // T10: 'unknown' (summary refresh in flight) renders as E2EE too, so an
+  // envelope is never shown as raw `E2E1{...}` text off a stale cache.
+  const roomIsE2eeEnabled = useRoomE2eeState(message.roomId) !== "plaintext";
   const renderState = resolveMessageRenderState(
     message,
     roomCrypto?.cipher ?? null,

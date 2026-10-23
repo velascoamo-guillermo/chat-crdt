@@ -1,9 +1,28 @@
 import * as Y from 'yjs';
+import type { MessageDto } from '@chat-crdt/shared';
 import { SyncEngine } from './SyncEngine';
 
 export interface IStorage {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
+  /** Needed for discard() and legacy-key cleanup; without it they leave the row. */
+  removeItem?(key: string): Promise<void>;
+}
+
+export interface SQLitePersistenceOptions {
+  /**
+   * T10: per-account namespace (the user id). The key becomes
+   * `yjs:<scope>:<roomId>` so two accounts on one device never share a local
+   * doc — sharing let account A's unsynced plaintext be sent by account B.
+   */
+  scope?: string;
+  /**
+   * T10: decides whether a pre-scope `yjs:<roomId>` doc is adopted on first
+   * load under the scoped key. It sees the legacy doc's messages; without a
+   * policy nothing is adopted. The legacy key is deleted either way, so
+   * exactly one account gets to decide.
+   */
+  adoptLegacy?: (messages: MessageDto[]) => boolean;
 }
 
 /** In-memory IStorage for tests and SSR */
@@ -16,6 +35,10 @@ export class MemoryStorage implements IStorage {
 
   async setItem(key: string, value: string): Promise<void> {
     this.store.set(key, value);
+  }
+
+  async removeItem(key: string): Promise<void> {
+    this.store.delete(key);
   }
 }
 
@@ -55,8 +78,9 @@ export class SQLitePersistence {
     private readonly engine: SyncEngine,
     private readonly storage: IStorage,
     private readonly debounceMs: number = PERSIST_DEBOUNCE_MS,
+    private readonly options: SQLitePersistenceOptions = {},
   ) {
-    this.key = `yjs:${engine.roomId}`;
+    this.key = options.scope ? `yjs:${options.scope}:${engine.roomId}` : `yjs:${engine.roomId}`;
     // Debounce: a rapid burst of updates (e.g. initial sync) writes once.
     this.docUpdateHandler = () => {
       if (this.persistTimer) clearTimeout(this.persistTimer);
@@ -77,7 +101,8 @@ export class SQLitePersistence {
 
   async load(): Promise<void> {
     if (this.loaded) return; // idempotent
-    const raw = await this.storage.getItem(this.key);
+    let raw = await this.storage.getItem(this.key);
+    if (raw === null && this.options.scope) raw = await this.migrateLegacy();
     if (this.destroyed) return; // component unmounted during async read
     if (raw) {
       Y.applyUpdate(this.engine.doc, base64ToUint8(raw));
@@ -85,6 +110,40 @@ export class SQLitePersistence {
     // Subscribe AFTER loading to avoid persisting the initial hydration
     this.engine.doc.on('update', this.docUpdateHandler);
     this.loaded = true;
+  }
+
+  /** Returns the legacy doc if the policy adopts it (now stored under the scoped key). */
+  private async migrateLegacy(): Promise<string | null> {
+    const legacyKey = `yjs:${this.engine.roomId}`;
+    const legacy = await this.storage.getItem(legacyKey);
+    if (!legacy) return null;
+    let adopt = false;
+    try {
+      const probe = new Y.Doc();
+      Y.applyUpdate(probe, base64ToUint8(legacy));
+      adopt = this.options.adoptLegacy?.(probe.getArray<MessageDto>('messages').toArray()) ?? false;
+      probe.destroy();
+    } catch {
+      adopt = false; // unreadable legacy doc: drop it
+    }
+    if (adopt) await this.storage.setItem(this.key, legacy);
+    await this.storage.removeItem?.(legacyKey);
+    return adopt ? legacy : null;
+  }
+
+  /**
+   * T10: throws this room's local doc away (the app resyncs from the server).
+   * Stops persisting first so nothing writes the discarded state back.
+   */
+  async discard(): Promise<void> {
+    this.engine.doc.off('update', this.docUpdateHandler);
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    this.destroyed = true;
+    await this.pendingWrite;
+    await this.storage.removeItem?.(this.key);
   }
 
   isLoaded(): boolean {

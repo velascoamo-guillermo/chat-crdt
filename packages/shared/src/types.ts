@@ -35,6 +35,15 @@ export const MAX_MESSAGE_LENGTH = 4000;
 export const WsMsgType = {
   SYNC: 0,
   AWARENESS: 1,
+  /**
+   * T10, server -> client: the client's sync update was rejected because it
+   * inserts non-E2E1 messages into an E2EE room. Payload: varUint keyId,
+   * varUint count, then `count` varString message ids. The server follows it
+   * with a sync step1 so the client can resend everything else.
+   */
+  E2EE_REJECTED: 20,
+  /** T10, server -> client: the room is E2EE at this epoch. Payload: varUint keyId. */
+  ROOM_EPOCH: 21,
 } as const;
 export type WsMsgType = typeof WsMsgType[keyof typeof WsMsgType];
 

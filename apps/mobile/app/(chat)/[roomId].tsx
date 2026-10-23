@@ -16,8 +16,14 @@ import {
 } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Stack, useRouter, useLocalSearchParams } from "expo-router";
-import { useRoomMessages, useRoomWsStatus, useRoomCrypto } from "../../src/store/chat.store";
-import { useRoomsStore } from "../../src/store/rooms.store";
+import {
+  useChatStore,
+  useRoomMessages,
+  useRoomWsStatus,
+  useRoomCrypto,
+  useRoomE2eeRejection,
+} from "../../src/store/chat.store";
+import { useRoomsStore, useRoomE2eeState } from "../../src/store/rooms.store";
 import { useSync } from "../../src/hooks/useSync";
 import { useEnableRoomE2ee } from "../../src/hooks/useE2ee";
 import { isComposerReady } from "../../src/crypto/composerGate";
@@ -109,7 +115,11 @@ export default function ChatScreen() {
   const headerHeight = top + HEADER_BASE;
 
   const roomSummary = useRoomsStore((s) => s.rooms.find((r) => r.name === roomId));
-  const canEnableE2ee = roomId !== "default" && roomSummary?.role === "admin" && roomSummary.currentKeyId === 0;
+  // T10: authoritative (refreshed-on-entry) E2EE state; the cached summary
+  // alone can be stale. 'unknown' gates the composer below.
+  const e2eeState = useRoomE2eeState(roomId);
+  const canEnableE2ee =
+    roomId !== "default" && roomSummary?.role === "admin" && e2eeState === "plaintext";
 
   // ADR-010 send gate (code review round 1, Critical #1/#3): the room can be
   // E2EE-enabled (currentKeyId > 0) before this device has actually loaded
@@ -119,10 +129,13 @@ export default function ChatScreen() {
   // recomputes live as grants load.
   const currentKeyId = roomSummary?.currentKeyId ?? 0;
   const roomCrypto = useRoomCrypto(roomId);
-  const composerReady = isComposerReady(currentKeyId, roomCrypto?.cipher ?? null);
+  const composerReady = isComposerReady(e2eeState, currentKeyId, roomCrypto?.cipher ?? null);
 
   const [composerHeight, setComposerHeight] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
+  // T10: plaintext the server refused in this E2EE room, already retracted
+  // from the chat; Composer puts it back in the draft.
+  const e2eeRejection = useRoomE2eeRejection(roomId);
 
   const handleComposerLayout = useCallback((e: LayoutChangeEvent) => {
     setComposerHeight(e.nativeEvent.layout.height);
@@ -144,12 +157,13 @@ export default function ChatScreen() {
       try {
         sendMessage(content);
         setSendError(null);
+        useChatStore.getState().clearE2eeRejection(roomId);
       } catch (err) {
         setSendError(err instanceof Error ? err.message : "Failed to send message");
         throw err;
       }
     },
-    [sendMessage],
+    [sendMessage, roomId],
   );
 
   if (membership === "not-a-member") {
@@ -218,9 +232,19 @@ export default function ChatScreen() {
           {!composerReady ? (
             <View style={[styles.e2eeBanner, { backgroundColor: t.surface, borderColor: t.border }]}>
               <Text style={[styles.e2eeBannerText, { color: t.textSecondary }]}>
-                🔒 Waiting for encryption key…
+                {e2eeState === "unknown" ? "🔒 Checking encryption…" : "🔒 Waiting for encryption key…"}
               </Text>
             </View>
+          ) : null}
+          {e2eeRejection ? (
+            <Text
+              testID="e2ee-rejection-notice"
+              style={[styles.e2eeBannerError, { color: t.status.offline, textAlign: "center" }]}
+            >
+              {e2eeRejection.kind === "resynced"
+                ? "This room couldn't sync and was reloaded from the server. Your encrypted messages were kept."
+                : "Message not sent: encryption required. Your text is back in the composer."}
+            </Text>
           ) : null}
           {sendError ? (
             <Text style={[styles.e2eeBannerError, { color: t.status.offline, textAlign: "center" }]}>
@@ -259,7 +283,12 @@ export default function ChatScreen() {
               </Text>
             </>
           )}
-          <Composer onSend={handleSend} sendTyping={sendTyping} disabled={!composerReady} />
+          <Composer
+            onSend={handleSend}
+            sendTyping={sendTyping}
+            disabled={!composerReady}
+            restoreDraft={e2eeRejection}
+          />
         </View>
       </KeyboardStickyView>
     </KeyboardGestureArea>

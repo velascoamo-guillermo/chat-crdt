@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import {
   Host,
   Row,
@@ -10,6 +10,7 @@ import {
   useUITheme,
 } from "../ui";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
+import { draftAfterRestore } from "../utils/draftRestore";
 
 interface Props {
   onSend: (content: string) => void;
@@ -19,18 +20,29 @@ interface Props {
    * used while the room is E2EE-enabled but this device hasn't loaded the
    * current epoch's key yet. */
   disabled?: boolean;
+  /** T10: text the server refused (plaintext into an E2EE room) to put back
+   * in the draft. Applied once per `seq`, appended to anything already typed. */
+  restoreDraft?: { text: string; seq: number };
 }
 
 const TYPING_THROTTLE_MS = 300;
 const CIRCLE = 40;
 
-export const Composer = memo(function Composer({ onSend, sendTyping, disabled = false }: Props) {
+export const Composer = memo(function Composer({ onSend, sendTyping, disabled = false, restoreDraft }: Props) {
   // Text lives in native state — keystrokes don't round-trip through JS or
   // re-render React. `draft.value` is read on demand when sending.
   const draft = useNativeState("");
   const lastTypingAt = useRef(0);
   const lastActive = useRef(false);
+  const restoredSeq = useRef<number | null>(null);
   const t = useUITheme();
+
+  useEffect(() => {
+    const next = draftAfterRestore(draft.value, restoreDraft, restoredSeq.current);
+    if (!next) return;
+    restoredSeq.current = next.seq;
+    if (next.draft !== draft.value) draft.value = next.draft;
+  }, [restoreDraft, draft]);
 
   const handleChange = useCallback(
     (text: string) => {

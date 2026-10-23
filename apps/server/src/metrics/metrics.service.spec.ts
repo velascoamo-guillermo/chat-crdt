@@ -16,6 +16,15 @@ describe('MetricsService', () => {
     expect(text).toContain('# TYPE fanout_bytes_total counter');
     expect(text).toContain('# TYPE persist_duration_seconds histogram');
     expect(text).toContain('# TYPE yjs_state_bytes gauge');
+    expect(text).toContain('# TYPE e2ee_rejected_updates_total counter');
+  });
+
+  it('counts sync updates rejected by the E2EE plaintext gate (T10)', async () => {
+    metrics.incE2eeRejectedUpdates();
+    metrics.incE2eeRejectedUpdates();
+
+    const text = await metrics.getMetricsText();
+    expect(text).toContain('e2ee_rejected_updates_total 2');
   });
 
   it('increments and decrements the ws_connections gauge', async () => {

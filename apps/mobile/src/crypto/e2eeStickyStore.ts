@@ -10,11 +10,19 @@ import type { SecureKeyValueStore } from './keyStore';
  * lowercase-alphanumeric-plus-hyphens (CreateRoomDto).
  */
 export class E2eeStickyStore {
+  // T16: rooms whose flag is known to be persisted (written or read back as
+  // set) this session. The flag never goes back, so re-marking them is a
+  // no-op — and on Android each SecureStore write is a slow Keystore op that
+  // competes with the room-key writes a live unlock waits on.
+  private readonly persisted = new Set<string>();
+
   constructor(private readonly backend: SecureKeyValueStore) {}
 
   async wasEverE2ee(room: string): Promise<boolean> {
     try {
-      return (await this.backend.getItem(storageKey(room))) === '1';
+      const set = (await this.backend.getItem(storageKey(room))) === '1';
+      if (set) this.persisted.add(room);
+      return set;
     } catch {
       // Unreadable flag: fail closed rather than risk a plaintext send.
       return true;
@@ -22,7 +30,9 @@ export class E2eeStickyStore {
   }
 
   async markE2ee(room: string): Promise<void> {
+    if (this.persisted.has(room)) return;
     await this.backend.setItem(storageKey(room), '1');
+    this.persisted.add(room);
   }
 }
 

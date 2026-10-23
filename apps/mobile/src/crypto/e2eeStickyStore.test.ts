@@ -53,4 +53,53 @@ describe('E2eeStickyStore (T10: a room seen as E2EE can never downgrade locally)
     });
     expect(await failing.wasEverE2ee('team-a')).toBe(true);
   });
+
+  // T16: every rooms refresh and epoch frame re-marks rooms; on Android each
+  // SecureStore write is a Keystore op, and a burst of them delayed a live
+  // unlock by seconds. Only the first mark per room actually writes.
+  it('writes a room\'s flag once, not on every mark', async () => {
+    let writes = 0;
+    const counting = new E2eeStickyStore({
+      ...backend,
+      setItem: async (key, value) => {
+        writes++;
+        await backend.setItem(key, value);
+      },
+    });
+    await counting.markE2ee('team-a');
+    await counting.markE2ee('team-a');
+    await counting.markE2ee('team-b');
+    expect(writes).toBe(2);
+    expect(await counting.wasEverE2ee('team-a')).toBe(true);
+  });
+
+  it('does not write a flag it has already read as set', async () => {
+    await store.markE2ee('team-a');
+    let writes = 0;
+    const counting = new E2eeStickyStore({
+      ...backend,
+      setItem: async (key, value) => {
+        writes++;
+        await backend.setItem(key, value);
+      },
+    });
+    expect(await counting.wasEverE2ee('team-a')).toBe(true);
+    await counting.markE2ee('team-a');
+    expect(writes).toBe(0);
+  });
+
+  it('retries a mark whose write failed', async () => {
+    let fail = true;
+    const flaky = new E2eeStickyStore({
+      ...backend,
+      setItem: async (key, value) => {
+        if (fail) throw new Error('keystore busy');
+        await backend.setItem(key, value);
+      },
+    });
+    await expect(flaky.markE2ee('team-a')).rejects.toThrow('keystore busy');
+    fail = false;
+    await flaky.markE2ee('team-a');
+    expect(await new E2eeStickyStore(backend).wasEverE2ee('team-a')).toBe(true);
+  });
 });

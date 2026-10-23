@@ -13,10 +13,36 @@ import {
   enableOrRotateRoomKey,
   type KeyFlowsContext,
 } from '../crypto/keyFlows';
+import { createLiveKeyGrants, type LiveKeyGrants } from '../crypto/liveKeyGrants';
 
 const API = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 const keyStore = new RoomKeyStore(secureStoreBackend);
+
+// T16: per open room, the live-grant controller (owned by useE2eeCipher's key
+// effect) and the room socket's KEY_REQUEST sender (owned by useSync).
+const liveGrantsByRoom = new Map<string, LiveKeyGrants>();
+const keyRequesters = new Map<string, () => boolean>();
+
+/** T16: how useSync feeds the room socket's key-grant frames to useE2eeCipher. */
+export const liveKeyGrantSignals = {
+  /** Returns an unregister function that only removes this exact sender. */
+  setKeyRequester(room: string, send: () => boolean): () => void {
+    keyRequesters.set(room, send);
+    return () => {
+      if (keyRequesters.get(room) === send) keyRequesters.delete(room);
+    };
+  },
+  keyRequested(room: string): void {
+    liveGrantsByRoom.get(room)?.onKeyRequested();
+  },
+  keyGranted(room: string): void {
+    liveGrantsByRoom.get(room)?.onKeyGranted();
+  },
+  reconnected(room: string): void {
+    liveGrantsByRoom.get(room)?.onReconnected();
+  },
+};
 
 /**
  * ADR-010 wiring: builds the room's ContentCipher (only for rooms with
@@ -79,30 +105,63 @@ export function useE2eeCipher(roomIdOrName: string): LibsodiumContentCipher | nu
 
     const ctx: KeyFlowsContext = { apiBase: API, token };
     let cancelled = false;
-    void (async () => {
-      await ensureIdentityPublished(ctx, keyStore);
-      if (cancelled) return;
-      await fetchAndLoadMyGrants(ctx, summary.id, keyStore, cipher);
-      if (cancelled) return;
-      bumpRoomCrypto(roomIdOrName);
 
-      // Best-effort: serve pending grants for OTHER members this device
-      // holds keys for (first-responder pattern — no admin gate).
-      await servePendingGrants(ctx, summary.id, keyStore).catch(() => undefined);
-
-      // Track which epochs are pending FOR ME, for the "waiting for key"
-      // vs "key unavailable" render-state distinction (ADR-010, Rendering).
+    // Track which epochs are pending FOR ME, for the "waiting for key"
+    // vs "key unavailable" render-state distinction (ADR-010, Rendering).
+    const refreshPendingForMe = async () => {
       const res = await fetch(`${API}/rooms/${summary.id}/keys/pending`, {
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => null);
       if (cancelled || !res || !res.ok) return;
       const pending: { userId: string; keyId: number }[] = await res.json();
+      if (cancelled) return;
       const mine = new Set(pending.filter((p) => p.userId === user.id).map((p) => p.keyId));
       setPendingEpochsForMe(roomIdOrName, mine);
-    })().catch(() => undefined); // best-effort key loading — never an unhandled rejection
+    };
+
+    const loadMyGrants = async () => {
+      await fetchAndLoadMyGrants(ctx, summary.id, keyStore, cipher);
+      if (cancelled) return;
+      bumpRoomCrypto(roomIdOrName);
+    };
+
+    // T16: unlock live while gated, and serve other members' live requests.
+    const live = createLiveKeyGrants({
+      serve: () => servePendingGrants(ctx, summary.id, keyStore),
+      load: async () => {
+        await loadMyGrants();
+        await refreshPendingForMe();
+      },
+      request: () => keyRequesters.get(roomIdOrName)?.() ?? false,
+      isReady: () => {
+        const keyId = useRoomsStore.getState().rooms.find((r) => r.name === roomIdOrName)?.currentKeyId ?? 0;
+        return keyId > 0 && cipher.hasKey(keyId);
+      },
+    });
+    liveGrantsByRoom.set(roomIdOrName, live);
+
+    void (async () => {
+      await ensureIdentityPublished(ctx, keyStore);
+      if (cancelled) return;
+      await loadMyGrants();
+      if (cancelled) return;
+
+      // Best-effort: serve pending grants for OTHER members this device
+      // holds keys for (first-responder pattern — no admin gate).
+      await servePendingGrants(ctx, summary.id, keyStore).catch(() => undefined);
+
+      await refreshPendingForMe();
+    })()
+      .catch(() => undefined) // best-effort key loading — never an unhandled rejection
+      .then(() => {
+        // Still gated after the initial load: ask the members online now.
+        if (!cancelled) live.start();
+      });
 
     return () => {
       cancelled = true;
+      live.stop();
+      if (liveGrantsByRoom.get(roomIdOrName) === live) liveGrantsByRoom.delete(roomIdOrName);
     };
   }, [cipher, currentKeyId, token, user, roomIdOrName, setRoomCipher, setPendingEpochsForMe, bumpRoomCrypto]);
 

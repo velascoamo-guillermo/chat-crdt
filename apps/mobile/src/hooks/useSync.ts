@@ -8,7 +8,7 @@ import {
 import { useAuthStore } from '../store/auth.store';
 import { useChatStore } from '../store/chat.store';
 import { useRoomsStore } from '../store/rooms.store';
-import { useE2eeCipher } from './useE2ee';
+import { useE2eeCipher, liveKeyGrantSignals } from './useE2ee';
 import { E2EE_PREFIX } from '../crypto/e2eeEnvelope';
 import { rejectedDraftText } from '../crypto/rejectedDraft';
 import { shouldAdoptLegacyDoc } from '../crypto/legacyDocPolicy';
@@ -119,6 +119,7 @@ export function useSync(roomId: string) {
 
     let provider: WebSocketProvider | null = null;
     let unsubMessages: (() => void) | null = null;
+    let unregisterKeyRequester: (() => void) | null = null;
     let cancelled = false;
 
     persistence.load().then(() => {
@@ -157,6 +158,8 @@ export function useSync(roomId: string) {
           // disconnected — re-confirm on every (re)connect.
           if (status === 'connected' && roomId !== 'default') {
             void useRoomsStore.getState().refreshRoom(roomId);
+            // T16: a grant notice may have been missed while disconnected.
+            liveKeyGrantSignals.reconnected(roomId);
           }
         },
         // T10: the room is (or just became) E2EE — gate the composer now
@@ -164,6 +167,9 @@ export function useSync(roomId: string) {
         onRoomEpoch: (keyId) => {
           if (roomId !== 'default') useRoomsStore.getState().noteRoomEpoch(roomId, keyId);
         },
+        // T16: another member is missing a grant / our grant landed.
+        onKeyRequested: () => liveKeyGrantSignals.keyRequested(roomId),
+        onKeyGranted: () => liveKeyGrantSignals.keyGranted(roomId),
         // T10: the server refused plaintext we sent into this E2EE room. The
         // provider already retracted those messages (so its resync goes
         // through and nothing queued alongside them is lost); gate the room
@@ -221,12 +227,15 @@ export function useSync(roomId: string) {
         },
       });
       providerRef.current = provider;
+      const roomProvider = provider;
+      unregisterKeyRequester = liveKeyGrantSignals.setKeyRequester(roomId, () => roomProvider.requestKey());
       setMembership('ok');
     });
 
     return () => {
       cancelled = true;
       unsubMessages?.();
+      unregisterKeyRequester?.();
       provider?.destroy();
       providerRef.current = null;
       engineRef.current = null;

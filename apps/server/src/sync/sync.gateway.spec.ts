@@ -966,6 +966,48 @@ describe('SyncGateway', () => {
       expect(typesSent(holder)).toEqual([KEY_REQUEST]);
     });
 
+    it('throttles key requests per user and room, not per socket (many sockets do not multiply the work)', async () => {
+      gateway.onModuleInit();
+      const [holder, ...gatedSockets] = await connect('team-a', 1, ['user-1', 'user-2', 'user-2', 'user-2']);
+      roomKeys.hasPendingFor.mockResolvedValue(true);
+
+      for (const socket of gatedSockets) socket.emit('message', frame(KEY_REQUEST));
+      await flush();
+
+      expect(roomKeys.hasPendingFor).toHaveBeenCalledTimes(1);
+      expect(typesSent(holder)).toEqual([KEY_REQUEST]);
+    });
+
+    it('relays at most once a second per room, whoever asks (a serve covers every pending member)', async () => {
+      gateway.onModuleInit();
+      const [holder, gatedB, gatedC] = await connect('team-a', 1, ['user-1', 'user-2', 'user-3']);
+      roomKeys.hasPendingFor.mockResolvedValue(true);
+
+      gatedB.emit('message', frame(KEY_REQUEST));
+      await flush();
+      gatedC.emit('message', frame(KEY_REQUEST));
+      await flush();
+
+      expect(typesSent(holder)).toEqual([KEY_REQUEST]);
+      expect(pub.publish.mock.calls.filter(([ch]) => String(ch).startsWith('room:keyreq:'))).toHaveLength(1);
+    });
+
+    it('relays again once the throttle window has passed', async () => {
+      const now = jest.spyOn(Date, 'now').mockReturnValue(10_000);
+      gateway.onModuleInit();
+      const [holder, gated] = await connect('team-a', 1, ['user-1', 'user-2']);
+      roomKeys.hasPendingFor.mockResolvedValue(true);
+
+      gated.emit('message', frame(KEY_REQUEST));
+      await flush();
+      now.mockReturnValue(11_001);
+      gated.emit('message', frame(KEY_REQUEST));
+      await flush();
+
+      expect(typesSent(holder)).toEqual([KEY_REQUEST, KEY_REQUEST]);
+      now.mockRestore();
+    });
+
     it('relays a key request from another instance (Redis) to local sockets of other users', async () => {
       gateway.onModuleInit();
       const [holder, gated] = await connect('team-a', 1, ['user-1', 'user-2']);

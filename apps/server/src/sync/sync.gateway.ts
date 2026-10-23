@@ -39,8 +39,10 @@ const EPOCH_CHANNEL_PREFIX = 'room:epoch:'; // + Prisma Room.id
 const KEY_REQUEST_CHANNEL_PREFIX = 'room:keyreq:'; // + Prisma Room.id
 const KEY_GRANT_CHANNEL_PREFIX = 'room:keygrant:'; // + Prisma Room.id
 
-// T16: a socket's key requests are relayed at most this often.
+// T16: key requests are checked at most this often per (room, user), and
+// relayed at most this often per room (one serve covers every pending member).
 const KEY_REQUEST_MIN_INTERVAL_MS = 1_000;
+const KEY_REQUEST_THROTTLE_PRUNE_SIZE = 1_000;
 
 // y-protocols/sync message types carrying a doc update (step1 only carries a
 // state vector).
@@ -120,7 +122,9 @@ export class SyncGateway
   // T16: authenticated user per socket, to route key requests and grant
   // notices by user.
   private readonly clientUser = new WeakMap<WebSocket, string>();
-  private readonly lastKeyRequestAt = new WeakMap<WebSocket, number>();
+  // Keyed by `user:<dbId>:<userId>` (DB check) and `room:<dbId>` (relay), not
+  // by socket: opening more sockets must not multiply the work. Per instance.
+  private readonly keyRequestAt = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -240,21 +244,19 @@ export class SyncGateway
   /**
    * T16: a member says it's missing a grant. Relayed (locally and over Redis)
    * only in an E2EE room, only if the server agrees something is pending for
-   * that user, and at most once a second per socket.
+   * that user, checked at most once a second per (room, user) and relayed at
+   * most once a second per room.
    */
   private handleKeyRequest(client: WebSocket, room: RoomState): void {
     const userId = this.clientUser.get(client);
     const dbId = room.dbId;
     if (!userId || !dbId || room.currentKeyId <= 0 || room.roomId === 'default') return;
-    const now = Date.now();
-    const last = this.lastKeyRequestAt.get(client);
-    if (last !== undefined && now - last < KEY_REQUEST_MIN_INTERVAL_MS) return;
-    this.lastKeyRequestAt.set(client, now);
+    if (!this.takeKeyRequestSlot(`user:${dbId}:${userId}`)) return;
 
     void this.roomKeys
       .hasPendingFor(dbId, userId)
       .then((pending) => {
-        if (!pending) return;
+        if (!pending || !this.takeKeyRequestSlot(`room:${dbId}`)) return;
         this.relayKeyRequest(dbId, userId);
         const payload: KeyRequestPayload = { origin: this.instanceId, userId };
         return this.pub.publish(`${KEY_REQUEST_CHANNEL_PREFIX}${dbId}`, JSON.stringify(payload));
@@ -280,6 +282,20 @@ export class SyncGateway
       const frame = encodeRoomEpoch(keyId);
       for (const client of room.clients) client.send(frame);
     }
+  }
+
+  /** Fixed-interval throttle: true (and the slot is taken) if `key` is free now. */
+  private takeKeyRequestSlot(key: string): boolean {
+    const now = Date.now();
+    const last = this.keyRequestAt.get(key);
+    if (last !== undefined && now - last < KEY_REQUEST_MIN_INTERVAL_MS) return false;
+    if (this.keyRequestAt.size >= KEY_REQUEST_THROTTLE_PRUNE_SIZE) {
+      for (const [k, at] of this.keyRequestAt) {
+        if (now - at >= KEY_REQUEST_MIN_INTERVAL_MS) this.keyRequestAt.delete(k);
+      }
+    }
+    this.keyRequestAt.set(key, now);
+    return true;
   }
 
   afterInit(server: Server): void {

@@ -966,6 +966,35 @@ describe('SyncGateway', () => {
       expect(typesSent(holder)).toEqual([KEY_REQUEST]);
     });
 
+    it('ignores key requests in the default lobby, even if it somehow carries an epoch', async () => {
+      gateway.onModuleInit();
+      jwt.verify.mockReturnValueOnce({ sub: 'user-1' }).mockReturnValueOnce({ sub: 'user-2' });
+      prisma.room.findUnique.mockResolvedValue({ id: 'db-default', name: 'default', currentKeyId: 1, yjsState: null });
+      const holder = new FakeSocket();
+      const requester = new FakeSocket();
+      await gateway.handleConnection(holder as any, fakeReq({ room: 'default', token: 'ok' }));
+      await gateway.handleConnection(requester as any, fakeReq({ room: 'default', token: 'ok' }));
+      holder.sent.length = 0;
+
+      requester.emit('message', frame(KEY_REQUEST));
+      await flush();
+
+      expect(roomKeys.hasPendingFor).not.toHaveBeenCalled();
+      expect(typesSent(holder)).toEqual([]);
+    });
+
+    it('ignores its own key-request and grant relays echoed back by Redis', async () => {
+      gateway.onModuleInit();
+      const [holder, gated] = await connect('team-a', 1, ['user-1', 'user-2']);
+      const self = (gateway as any).instanceId as string;
+
+      onPmessage()('room:keyreq:*', 'room:keyreq:db-team-a', JSON.stringify({ origin: self, userId: 'user-2' }));
+      onPmessage()('room:keygrant:*', 'room:keygrant:db-team-a', JSON.stringify({ origin: self, userIds: ['user-2'] }));
+
+      expect(typesSent(holder)).toEqual([]);
+      expect(typesSent(gated)).toEqual([]);
+    });
+
     it('throttles key requests per user and room, not per socket (many sockets do not multiply the work)', async () => {
       gateway.onModuleInit();
       const [holder, ...gatedSockets] = await connect('team-a', 1, ['user-1', 'user-2', 'user-2', 'user-2']);

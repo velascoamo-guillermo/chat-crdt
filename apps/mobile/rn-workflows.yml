@@ -1,0 +1,31 @@
+# rn-workflows config. Run `bunx rn-workflows generate` after editing.
+#
+# iOS only for now: one `staging` profile that ships to TestFlight. Local
+# releases go through scripts/release-ios.sh, which bakes the server URLs in
+# from TAILSCALE_HOST. Owner steps: .superpowers/sdd/T14-owner-runbook.md.
+project:
+  type: expo
+  bundleId: com.chatcrdt.app
+  packageName: com.chatcrdt.app
+  scheme: chatcrdt
+ci:
+  provider: github-actions
+  # Not .github/workflows: GitHub never runs a workflow from here. Move it there
+  # once the signing secrets are set (see SETUP.md).
+  workflowsDir: ci/workflows
+  # Placeholders until CI is enabled: replace with the real Tailscale host.
+  env:
+    EXPO_NO_DOTENV: '1'
+    EXPO_PUBLIC_API_URL: https://TAILSCALE_HOST
+    EXPO_PUBLIC_WS_URL: wss://TAILSCALE_HOST/sync
+checks:
+  test: true
+  lint: true
+  typecheck: true
+build:
+  staging:
+    platform: ios
+    distribution: testflight
+    ios:
+      # TestFlight only accepts App Store-signed builds; `init` writes ad-hoc.
+      exportMethod: app-store

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import type { Awareness } from 'y-protocols/awareness';
-import type { PresenceState } from '@chat-crdt/shared';
+import { typingPeers } from '../chat/conversationCopy';
 
-export function usePresence(awareness: Awareness | null) {
+// `selfUsername` keeps the local user out of the typing list on their other devices too.
+export function usePresence(awareness: Awareness | null, selfUsername?: string) {
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [onlineCount, setOnlineCount] = useState(0);
 
@@ -10,13 +11,9 @@ export function usePresence(awareness: Awareness | null) {
     if (!awareness) return;
 
     const updatePresence = () => {
-      const states = Array.from(awareness.getStates().values()) as Partial<PresenceState>[];
-      setOnlineCount(states.length);
-      setTypingUsers(
-        states
-          .filter(s => s.isTyping === true && typeof s.username === 'string')
-          .map(s => s.username as string),
-      );
+      const states = awareness.getStates() as Map<number, Record<string, unknown>>;
+      setOnlineCount(states.size);
+      setTypingUsers(typingPeers(states, awareness.clientID, selfUsername));
     };
 
     awareness.on('change', updatePresence);
@@ -25,7 +22,7 @@ export function usePresence(awareness: Awareness | null) {
     return () => {
       awareness.off('change', updatePresence);
     };
-  }, [awareness]);
+  }, [awareness, selfUsername]);
 
   return { typingUsers, onlineCount };
 }

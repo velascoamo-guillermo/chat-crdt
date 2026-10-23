@@ -13,7 +13,7 @@
 # only have come from op-sqlite's `chat.db` (SQLitePersistence in useSync.ts), not from
 # anything still warm in memory.
 #
-# RED-run finding: on a loaded dev machine (several simulators + Metro + docker infra
+# RED-run finding: on a loaded dev machine (several simulators + docker infra
 # + apps/server all running at once), the app can get evicted to the home screen
 # between the part 1 and part 2 `maestro test` invocations for reasons unrelated to
 # this feature (simulator memory pressure). The `launchApp: clearState: false` guard
@@ -34,20 +34,26 @@ appId: com.chatcrdt.app
 ---
 - launchApp:
     clearState: false
+# Every launch lands in #general; go back to this run's room.
+- runFlow: subflows/open-room.yaml
 - extendedWaitUntil:
     visible: "disconnected"
     timeout: 15000
-- tapOn: "Message…"
-- inputText: "${RUN_ID}-A-offline-1"
-- tapOn: "Up"
-- assertVisible: "${RUN_ID}-A-offline-1"
-- tapOn: "Message…"
-- inputText: "${RUN_ID}-A-offline-2"
-- tapOn: "Up"
-- assertVisible: "${RUN_ID}-A-offline-2"
+- runFlow:
+    file: subflows/send.yaml
+    env:
+      TEXT: "${RUN_ID}-A-offline-1"
+      COUNT: "2"
+- runFlow:
+    file: subflows/send.yaml
+    env:
+      TEXT: "${RUN_ID}-A-offline-2"
+      COUNT: "3"
 - stopApp
 - launchApp:
     clearState: false
+- runFlow: subflows/open-room.yaml
+- assertVisible: "3 msgs"
 - assertVisible: "${RUN_ID}-A-online-1"
 - assertVisible: "${RUN_ID}-A-offline-1"
 - assertVisible: "${RUN_ID}-A-offline-2"

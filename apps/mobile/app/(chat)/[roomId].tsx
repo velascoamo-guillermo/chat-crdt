@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,9 +6,12 @@ import {
   StyleSheet,
   Platform,
   type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type ScrollViewProps,
 } from "react-native";
-import { FlashList } from "@shopify/flash-list";
+import { FlashList, type FlashListRef } from "@shopify/flash-list";
+import type { MessageDto } from "@chat-crdt/shared";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   KeyboardGestureArea,
@@ -21,6 +24,7 @@ import {
   useRoomMessages,
   useRoomWsStatus,
   useRoomCrypto,
+  useRoomLoaded,
   useRoomE2eeRejection,
 } from "../../src/store/chat.store";
 import { useRoomsStore, useRoomE2eeState } from "../../src/store/rooms.store";
@@ -28,35 +32,47 @@ import { useSync } from "../../src/hooks/useSync";
 import { useEnableRoomE2ee } from "../../src/hooks/useE2ee";
 import { isComposerReady } from "../../src/crypto/composerGate";
 import { MessageItem } from "../../src/components/MessageItem";
+import { groupPosition, GROUP_GAP_MS } from "../../src/chat/groupMessages";
+import { useAuthStore } from "../../src/store/auth.store";
 import { ChatScrollView } from "../../src/components/ChatScrollView";
 import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
-import { HeaderAccount, OnlinePill } from "../../src/components/ChatHeader";
+import { EmptyRoom } from "../../src/components/EmptyRoom";
+import { showEmptyRoom } from "../../src/chat/emptyRoomGate";
+import {
+  composerResizeScroll,
+  shouldFollowNewMessages,
+  isAtListEnd,
+  type ScrollMetrics,
+} from "../../src/chat/listAnchor";
+import { HeaderAccount, HeaderRoomPill, HeaderRoomsDisc } from "../../src/components/ChatHeader";
+import { roomLabel, backAction } from "../../src/chat/headerPill";
 import { Composer } from "../../src/components/Composer";
-import { useUITheme } from "../../src/ui";
+import { useChatTheme } from "../../src/ui";
 import { isLiquidGlassAvailable } from "expo-glass-effect";
 import { computeOrderDigest } from "../../src/utils/orderDigest";
+import { isQaReadoutEnabled } from "../../src/qa/qaReadout";
 
 const LIST_PADDING = 8;
+
 // Native stack header content height (excludes the status-bar/safe area, which
 // we add separately from the top inset). iOS 44, Android 56.
 const HEADER_BASE = Platform.OS === "ios" ? 44 : 56;
 
-// QA-only readout for the Maestro E2E offline-sync flow (apps/mobile/.maestro).
-// Requires BOTH __DEV__ (never true in a release build, regardless of env
-// misconfiguration) AND an explicit opt-in env var — so it stays invisible in
-// ordinary local dev too, and only run.sh's Metro invocation (which sets
-// EXPO_PUBLIC_QA_READOUT=1) turns it on. Verify by launching without the env
-// var: the readout is absent even though __DEV__ is true.
-const QA_READOUT_ENABLED =
-  __DEV__ && process.env.EXPO_PUBLIC_QA_READOUT === "1";
+// The part of the mounted ScrollView instance the re-anchor uses.
+type NativeScroller = { scrollToEnd: (options?: { animated?: boolean }) => void };
 
-// The 'default' room is the pre-existing single-room-MVP lobby — its header
-// keeps the original "# general" copy the Maestro suite (apps/mobile/.maestro)
-// asserts on. Any other room shows its own slug.
-function headerTitle(roomId: string): string {
-  return roomId === "default" ? "# general" : `# ${roomId}`;
-}
+// QA-only readout for the Maestro E2E offline-sync flow (apps/mobile/.maestro).
+// Off unless the build sets EXPO_PUBLIC_QA_READOUT=1, which the e2e build
+// (.maestro/scripts/build-e2e.sh, release config) does. A production bundle
+// with the flag fails to build: config/qaReadoutGuard.js, run from
+// metro.config.js, and on Android config/withQaReadoutBundleCheck.js.
+const QA_READOUT_ENABLED = isQaReadoutEnabled(process.env.EXPO_PUBLIC_QA_READOUT);
+// The minifier folds this to "chatcrdt-qa-readout:1" only when the flag is
+// inlined, so that string marks an e2e bundle for the Android release check and
+// run.sh's preflight. Keep it a template on the env var: spelling the result
+// out here would put it in every bundle.
+const QA_READOUT_BUILD_TAG = `chatcrdt-qa-readout:${process.env.EXPO_PUBLIC_QA_READOUT}`;
 
 // ADR-010, Key-rotation trigger list item 0 (enablement): no special actor
 // or endpoint beyond the same atomic claim any member can call — in
@@ -66,7 +82,7 @@ function headerTitle(roomId: string): string {
 // what actually picks up the cipher (contentCipher is fixed at SyncEngine
 // construction — see useSync.ts), hence router.back() below.
 function EnableEncryptionBanner({ roomId }: { roomId: string }) {
-  const t = useUITheme();
+  const t = useChatTheme();
   const enableRoomE2ee = useEnableRoomE2ee();
   const router = useRouter();
   const [state, setState] = useState<"idle" | "enabling" | "error">("idle");
@@ -106,11 +122,14 @@ export default function ChatScreen() {
   const { roomId: roomIdParam } = useLocalSearchParams<{ roomId: string }>();
   const roomId = roomIdParam ?? "default";
   const messages = useRoomMessages(roomId);
+  const loaded = useRoomLoaded(roomId);
+  const myUserId = useAuthStore((s) => s.user?.id);
+  const myUsername = useAuthStore((s) => s.user?.username);
   const wsStatus = useRoomWsStatus(roomId);
   const { sendMessage, sendTyping, getAwareness, membership } = useSync(roomId);
-  const { typingUsers, onlineCount } = usePresence(getAwareness());
+  const { typingUsers, onlineCount } = usePresence(getAwareness(), myUsername);
   const router = useRouter();
-  const t = useUITheme();
+  const t = useChatTheme();
   const { top, bottom } = useSafeAreaInsets();
   const headerHeight = top + HEADER_BASE;
 
@@ -137,14 +156,161 @@ export default function ChatScreen() {
   // from the chat; Composer puts it back in the draft.
   const e2eeRejection = useRoomE2eeRejection(roomId);
 
-  const handleComposerLayout = useCallback((e: LayoutChangeEvent) => {
-    setComposerHeight(e.nativeEvent.layout.height);
+  // The composer stack (banners, typing row, pill/card) floats over the list
+  // and its height is the list's bottom padding. When it grows or shrinks while
+  // the reader is at the end, scroll back to the end so the last bubble stays
+  // above it instead of sliding underneath.
+  const listRef = useRef<FlashListRef<MessageDto>>(null);
+  // At-end is derived here from scroll offset, viewport, content height and
+  // the keyboard inset (isAtListEnd), not keyboard-controller's onEndVisible,
+  // which ignores the inset and reports "at end" for a reader scrolled up by
+  // less than the keyboard height. Recomputed on scroll, layout and inset
+  // changes — not on content growth, so a new message is judged against where
+  // the reader was before it arrived. False until measured, so mount-time
+  // layouts never fight startRenderingFromBottom.
+  const metricsRef = useRef<ScrollMetrics>({ offset: 0, visibleHeight: 0, contentHeight: 0, bottomInset: 0 });
+  const atEndRef = useRef(false);
+  const lastComposerHeight = useRef(0);
+  // Set once the first settled composer measurement has snapped the list to the end.
+  const snappedRef = useRef(false);
+  // A composer resize's padding lands in a later commit, so its end-scroll can
+  // run against the old content; Android then doesn't clamp the offset when the
+  // content shrinks (card→pill leaves a blank band). Repeat the end-scroll once
+  // the new content size is known. Holds the `animated` flag; a drag cancels it.
+  const pendingEndRef = useRef<boolean | null>(null);
+
+  // Native scroll view, not FlashList.scrollToEnd: the latter computes its
+  // target from estimated item sizes and lands mid-list on Android. Two frames
+  // so a just-added row or padding change is laid out first.
+  const scrollListToEnd = useCallback((animated: boolean) => {
+    // getNativeScrollRef() is typed as the component, but returns the
+    // mounted ScrollView instance (our ChatScrollView).
+    const scroller = listRef.current?.getNativeScrollRef() as unknown as NativeScroller | null;
+    requestAnimationFrame(() => requestAnimationFrame(() => scroller?.scrollToEnd({ animated })));
   }, []);
 
-  const renderScrollComponent = useCallback(
-    (props: ScrollViewProps) => <ChatScrollView {...props} />,
-    [],
+  const handleComposerLayout = useCallback((e: LayoutChangeEvent) => {
+    const next = e.nativeEvent.layout.height;
+    const action = composerResizeScroll({
+      atEnd: atEndRef.current,
+      snapped: snappedRef.current,
+      prevHeight: lastComposerHeight.current,
+      nextHeight: next,
+    });
+    if (action === "snap") snappedRef.current = true;
+    lastComposerHeight.current = next;
+    setComposerHeight(next);
+    if (action !== "none") {
+      pendingEndRef.current = action === "animate";
+      scrollListToEnd(action === "animate");
+    }
+  }, [scrollListToEnd]);
+
+  // FlashList's startRenderingFromBottom rests a short list on the viewport's
+  // bottom edge, ignoring paddingBottom — i.e. under the floating composer.
+  // Scrolling to the real end once it has loaded, and after each new message
+  // the reader should see, keeps the last bubble above the composer.
+  const sentByMeRef = useRef(false);
+  const prevCountRef = useRef(messages.length);
+  useEffect(() => {
+    const follow = shouldFollowNewMessages({
+      atEnd: atEndRef.current,
+      prevCount: prevCountRef.current,
+      nextCount: messages.length,
+      sentByMe: sentByMeRef.current,
+    });
+    prevCountRef.current = messages.length;
+    sentByMeRef.current = false;
+    if (follow) scrollListToEnd(true);
+  }, [messages.length, scrollListToEnd]);
+
+  const handleListLoad = useCallback(() => scrollListToEnd(false), [scrollListToEnd]);
+
+  // (keyboard-controller's extraContentPadding would replace this padding +
+  // re-anchor pair, but on Android with Reanimated 4.7 its scroll correction
+  // throws "Object is not a function": useExtraContentPadding calls the
+  // animated ref inside a nested requestAnimationFrame worklet.)
+  // Stable handlers: FlashList's own scroll-view props are read through a ref,
+  // so its re-renders (e.g. while scrolling) don't hand keyboard-controller a
+  // new onContentInsetChange and re-register its UI-thread reaction.
+  const listScrollPropsRef = useRef<ScrollViewProps>({});
+  const refreshAtEnd = useCallback(() => {
+    atEndRef.current = isAtListEnd(metricsRef.current);
+  }, []);
+  const handleListScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const n = e.nativeEvent;
+      const m = metricsRef.current;
+      m.offset = n.contentOffset.y;
+      m.contentHeight = n.contentSize.height;
+      m.visibleHeight = n.layoutMeasurement.height;
+      refreshAtEnd();
+      listScrollPropsRef.current.onScroll?.(e);
+    },
+    [refreshAtEnd],
   );
+  const handleListLayout = useCallback(
+    (e: LayoutChangeEvent) => {
+      metricsRef.current.visibleHeight = e.nativeEvent.layout.height;
+      refreshAtEnd();
+      listScrollPropsRef.current.onLayout?.(e);
+    },
+    [refreshAtEnd],
+  );
+  const handleListContentSize = useCallback(
+    (w: number, h: number) => {
+      metricsRef.current.contentHeight = h;
+      if (pendingEndRef.current !== null) {
+        scrollListToEnd(pendingEndRef.current);
+        pendingEndRef.current = null;
+      }
+      listScrollPropsRef.current.onContentSizeChange?.(w, h);
+    },
+    [scrollListToEnd],
+  );
+  const handleListBeginDrag = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    pendingEndRef.current = null;
+    listScrollPropsRef.current.onScrollBeginDrag?.(e);
+  }, []);
+  const handleContentInsetChange = useCallback(
+    (insets: { bottom?: number }) => {
+      metricsRef.current.bottomInset = insets.bottom ?? 0;
+      refreshAtEnd();
+    },
+    [refreshAtEnd],
+  );
+
+  // (keyboard-controller's extraContentPadding would replace this padding +
+  // re-anchor pair, but on Android with Reanimated 4.7 its scroll correction
+  // throws "Object is not a function": useExtraContentPadding calls the
+  // animated ref inside a nested requestAnimationFrame worklet.)
+  const renderScrollComponent = useCallback(
+    (props: ScrollViewProps) => {
+      listScrollPropsRef.current = props;
+      return (
+        <ChatScrollView
+          {...props}
+          // Closed, the composer sits `bottom` above the screen edge (sticky
+          // view offset); open, it rides the keyboard — so the keyboard lift
+          // only covers what the static `bottom` padding doesn't.
+          offset={bottom}
+          onScroll={handleListScroll}
+          onLayout={handleListLayout}
+          onContentSizeChange={handleListContentSize}
+          onScrollBeginDrag={handleListBeginDrag}
+          onContentInsetChange={handleContentInsetChange}
+        />
+      );
+    },
+    [bottom, handleListScroll, handleListLayout, handleListContentSize, handleListBeginDrag, handleContentInsetChange],
+  );
+
+  // Left disc: pop back to Rooms, or — on a cold start straight into a room
+  // (no history) — replace this screen with Rooms.
+  const handleRoomsPress = useCallback(() => {
+    if (backAction(router.canGoBack()) === "back") router.back();
+    else router.replace("/(chat)/rooms");
+  }, [router]);
 
   const handleSend = useCallback(
     (content: string) => {
@@ -156,6 +322,7 @@ export default function ChatScreen() {
       // failed and preserves the draft instead of clearing it.
       try {
         sendMessage(content);
+        sentByMeRef.current = true;
         setSendError(null);
         useChatStore.getState().clearE2eeRejection(roomId);
       } catch (err) {
@@ -169,7 +336,7 @@ export default function ChatScreen() {
   if (membership === "not-a-member") {
     return (
       <View style={styles.notMemberContainer}>
-        <Stack.Screen options={{ headerShown: true, title: headerTitle(roomId) }} />
+        <Stack.Screen options={{ headerShown: true, title: roomLabel(roomId) }} />
         <Text style={[styles.notMemberText, { color: t.textPrimary }]}>
           You&apos;re not a member of this room.
         </Text>
@@ -188,13 +355,17 @@ export default function ChatScreen() {
       <Stack.Screen
         options={{
           headerShown: true,
-          title: headerTitle(roomId),
-          headerTintColor: "white",
+          // No title text: the center slot is the room/status pill. `title`
+          // still names the screen for VoiceOver's header heading, which
+          // otherwise falls back to the route name ("[roomId]").
+          title: roomLabel(roomId),
+          headerTitle: () => (
+            <HeaderRoomPill roomId={roomId} wsStatus={wsStatus} onlineCount={onlineCount} />
+          ),
+          headerBackVisible: false,
+          headerLeft: () => <HeaderRoomsDisc onPress={handleRoomsPress} />,
           headerRight: () => (
             <HeaderAccount onPress={() => router.push("/(chat)/account")} />
-          ),
-          headerLeft: () => (
-            <OnlinePill wsStatus={wsStatus} onlineCount={onlineCount} />
           ),
           headerShadowVisible: false,
           headerTransparent: Platform.OS === "ios",
@@ -203,8 +374,21 @@ export default function ChatScreen() {
 
       <View style={styles.list}>
         <FlashList
+          ref={listRef}
+          onLoad={handleListLoad}
           data={messages}
-          renderItem={({ item }) => <MessageItem message={item} />}
+          renderItem={({ item, index }) => {
+            const g = groupPosition(messages[index - 1], item, messages[index + 1], GROUP_GAP_MS, myUserId);
+            return (
+              <MessageItem
+                message={item}
+                isOwn={item.userId === myUserId}
+                showAuthor={g.showAuthor}
+                isFirstInGroup={g.isFirst}
+                isLastInGroup={g.isLast}
+              />
+            );
+          }}
           keyExtractor={(item) => item.id}
           maintainVisibleContentPosition={{ startRenderingFromBottom: true }}
           renderScrollComponent={renderScrollComponent}
@@ -212,21 +396,32 @@ export default function ChatScreen() {
             paddingTop: !isLiquidGlassAvailable()
               ? 0
               : headerHeight + LIST_PADDING,
-            paddingBottom: composerHeight + LIST_PADDING,
+            paddingBottom: composerHeight + bottom + LIST_PADDING,
           }}
         />
+        {showEmptyRoom({ loaded, messageCount: messages.length, wsStatus }) ? (
+          <EmptyRoom
+            username={myUsername}
+            top={isLiquidGlassAvailable() ? headerHeight : 0}
+            bottom={composerHeight + bottom}
+          />
+        ) : null}
       </View>
 
       {/* Soft scroll-edge fade pinned to the bottom safe-area strip: messages
           stay visible but dissolve into the bg as they slide past the composer
-          into the home-indicator zone. Sits under the floating glass composer. */}
+          into the home-indicator zone. Sits under the floating glass composer.
+          Fade from a zero-alpha bg, not "transparent" (black): interpolating
+          from black leaves a grey band on the light canvas. */}
       <LinearGradient
-        colors={["transparent", t.bg]}
+        colors={[`${t.bg}00`, t.bg]}
         style={[styles.edge, { height: bottom + 24 }]}
         pointerEvents="none"
       />
 
-      <KeyboardStickyView style={[styles.composer]}>
+      {/* Lift the composer over the home indicator / nav bar only while the
+          keyboard is closed; open, it docks on the keyboard edge. */}
+      <KeyboardStickyView style={[styles.composer]} offset={{ closed: -bottom, opened: 0 }}>
         <View onLayout={handleComposerLayout}>
           {canEnableE2ee ? <EnableEncryptionBanner roomId={roomId} /> : null}
           {!composerReady ? (
@@ -253,7 +448,7 @@ export default function ChatScreen() {
           ) : null}
           <TypingIndicator typingUsers={typingUsers} />
           {/* QA-only readout for the Maestro E2E offline-sync flow — gated by
-              QA_READOUT_ENABLED (see above), never present in a release build.
+              QA_READOUT_ENABLED (see above), only in the e2e build.
               Three signals the flow can't get from scraping bubble text alone:
               - chat-message-count: exact merged count. Yjs updates are
                 idempotent (applying the same op twice is a no-op), so this
@@ -278,7 +473,11 @@ export default function ChatScreen() {
               <Text testID="chat-order-digest" style={styles.debugReadout}>
                 {computeOrderDigest(messages.map((m) => m.content))}
               </Text>
-              <Text testID="chat-ws-status" style={styles.debugReadout}>
+              <Text
+                testID="chat-ws-status"
+                nativeID={QA_READOUT_BUILD_TAG}
+                style={styles.debugReadout}
+              >
                 {wsStatus}
               </Text>
             </>
@@ -287,6 +486,7 @@ export default function ChatScreen() {
             onSend={handleSend}
             sendTyping={sendTyping}
             disabled={!composerReady}
+            encrypted={e2eeState === "e2ee"}
             restoreDraft={e2eeRejection}
           />
         </View>

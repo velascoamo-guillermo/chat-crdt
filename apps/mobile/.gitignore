@@ -9,3 +9,19 @@
 # expo-env.d.ts — intentionally committed so CI typecheck has Expo's ambient
 # `expo/types` reference without running the dev server. It is static.
 # @end expo-cli
+# per-run token of an e2e build in progress (.maestro/scripts/build-e2e.sh)
+.e2e-build-token
+
+# fastlane (rn-workflows) run output, and signing material that must never be
+# committed: the ASC .p8 key and match certificates stay outside the repo.
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+fastlane/README.md
+*.ipa
+*.dSYM.zip
+*.p8
+*.p12
+*.cer
+*.mobileprovision

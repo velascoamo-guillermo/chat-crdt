@@ -37,7 +37,7 @@ appId: com.chatcrdt.app
     # reset until a connection actually succeeds, so from an arbitrary point during
     # part 2's offline window the next retry could be just under 30s away. 45s cut it
     # too close on a loaded machine; 60s gives real margin over the 30s cap plus
-    # handshake + Metro/JS-thread scheduling time.
+    # handshake + JS-thread scheduling time.
     timeout: 60000
 - assertVisible: "${RUN_ID}-A-online-1"
 - assertVisible: "${RUN_ID}-A-offline-1"

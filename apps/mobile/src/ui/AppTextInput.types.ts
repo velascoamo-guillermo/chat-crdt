@@ -9,6 +9,12 @@ export type AppTextInputProps = {
   /** Observable text state. Create with `useNativeState("")`. */
   value: ObservableState<string>;
   onChangeText?: (text: string) => void;
+  /**
+   * Fired when the field gains or loses focus. On Android the field is also
+   * blurred when the soft keyboard hides (Compose keeps focus otherwise, e.g.
+   * after interactive dismiss), so `false` arrives there too.
+   */
+  onFocusChange?: (focused: boolean) => void;
   /** Fired when the keyboard action button (return/send/done) is pressed. */
   onSubmitEditing?: () => void;
   placeholder?: string;
@@ -32,4 +38,13 @@ export type AppTextInputProps = {
    * Material-style rounded border outline. @default true
    */
   glassEffect?: boolean;
+  /**
+   * No chrome at all: no glass, border or outline. For fields that sit on a
+   * surface the caller draws (the composer card). Wins over `glassEffect`.
+   * Android renders a `BasicTextField` instead of the outlined Material field.
+   * @default false
+   */
+  bare?: boolean;
+  /** Maximum visible lines before a multiline field scrolls. Android only. */
+  maxLines?: number;
 };

@@ -11,7 +11,8 @@
 # Usage:
 #   apps/mobile/.maestro/scripts/server-ctl.sh start   # idempotent — no-op if already up
 #   apps/mobile/.maestro/scripts/server-ctl.sh stop
-#   apps/mobile/.maestro/scripts/server-ctl.sh reset-room  # DELETE FROM "Room" WHERE name='default'
+#   apps/mobile/.maestro/scripts/server-ctl.sh reset-room  # DELETE FROM "Room" WHERE name='default' (manual only)
+#   apps/mobile/.maestro/scripts/server-ctl.sh prune-e2e-rooms [keep]  # drop all but the newest <keep> (default 5) e2e-* rooms
 #
 # Port 3001 (and the shared infra/docker-compose.yml postgres on 5432) are the
 # "default ports" lane owned by this ticket (see amendment 1) — safe to restart here.
@@ -45,7 +46,10 @@ start() {
 
 stop() {
   local pids
-  pids="$(lsof -ti ":${PORT}" || true)"
+  # LISTEN only: a bare `lsof -ti :PORT` also matches every *client* holding a
+  # socket to the server — the iOS simulator app and the adb server (reverse
+  # tunnel) — and SIGTERMs them too (app drops to SpringBoard, adb reverse lost).
+  pids="$(lsof -ti ":${PORT}" -sTCP:LISTEN || true)"
   if [ -z "$pids" ]; then
     echo "[server-ctl] nothing listening on :${PORT}"
     return 0
@@ -63,7 +67,7 @@ stop() {
 
   # Didn't go down gracefully — escalate, then give it one more short window.
   local stragglers
-  stragglers="$(lsof -ti ":${PORT}" || true)"
+  stragglers="$(lsof -ti ":${PORT}" -sTCP:LISTEN || true)"
   if [ -n "$stragglers" ]; then
     echo "[server-ctl] still listening after SIGTERM — sending SIGKILL to: $stragglers" >&2
     kill -9 $stragglers 2>/dev/null || true
@@ -89,12 +93,23 @@ reset_room() {
     psql -U chatcrdt -d chatcrdt -c "DELETE FROM \"Room\" WHERE name = 'default';"
 }
 
+# run.sh gives every run its own room (e2e-<RUN_ID>). Members, key grants and
+# the Yjs state (Room.yjsState) cascade with the row.
+prune_e2e_rooms() {
+  local keep="${1:-5}"
+  [[ "$keep" =~ ^[0-9]+$ ]] || { echo "[server-ctl] prune-e2e-rooms: keep must be a number" >&2; exit 2; }
+  echo "[server-ctl] pruning e2e-* rooms, keeping the newest $keep..."
+  docker compose -f "$ROOT_DIR/infra/docker-compose.yml" exec -T postgres \
+    psql -U chatcrdt -d chatcrdt -c "DELETE FROM \"Room\" WHERE name LIKE 'e2e-%' AND id NOT IN (SELECT id FROM \"Room\" WHERE name LIKE 'e2e-%' ORDER BY \"createdAt\" DESC LIMIT $keep);"
+}
+
 case "${1:-}" in
   start) start ;;
   stop) stop ;;
   reset-room) reset_room ;;
+  prune-e2e-rooms) prune_e2e_rooms "${2:-5}" ;;
   *)
-    echo "usage: $0 {start|stop|reset-room}" >&2
+    echo "usage: $0 {start|stop|reset-room|prune-e2e-rooms [keep]}" >&2
     exit 1
     ;;
 esac

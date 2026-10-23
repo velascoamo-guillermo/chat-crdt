@@ -1,28 +1,21 @@
 import { memo } from 'react';
-import { Host, Text, useUITheme } from '../ui';
+import { ThinkingRow, useChatTheme } from '../ui';
+import { typingLabel } from '../chat/conversationCopy';
 
 interface Props {
   typingUsers: string[];
 }
 
+// Display-only: who is typing comes from awareness (usePresence); sendTyping
+// throttling lives in Composer.
 export const TypingIndicator = memo(function TypingIndicator({ typingUsers }: Props) {
-  const t = useUITheme();
-
-  if (typingUsers.length === 0) return null;
-
-  const label =
-    typingUsers.length === 1
-      ? `${typingUsers[0]} is typing…`
-      : `${typingUsers.slice(0, 2).join(', ')} are typing…`;
-
+  const t = useChatTheme();
   return (
-    <Host matchContents={{ vertical: true }} style={{ backgroundColor: 'transparent' }}>
-      <Text
-        textStyle={{ fontSize: 12, color: t.textSecondary }}
-        style={{ paddingHorizontal: 16, paddingVertical: 4 }}
-      >
-        {label}
-      </Text>
-    </Host>
+    <ThinkingRow
+      label={typingLabel(typingUsers)}
+      color={t.textSecondary}
+      fill={t.surface}
+      radius={t.radius.bubble}
+    />
   );
 });

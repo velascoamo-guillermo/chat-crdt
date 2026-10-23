@@ -28,6 +28,7 @@ const CAPITALIZATION = {
 export function AppTextInput({
   value,
   onChangeText,
+  onFocusChange,
   onSubmitEditing,
   placeholder,
   placeholderColor,
@@ -42,14 +43,18 @@ export function AppTextInput({
   autoFocus = false,
   grow = false,
   glassEffect = true,
+  bare = false,
 }: AppTextInputProps) {
   // Only force `tint` (accent). Leave text/placeholder unset so SwiftUI uses
   // its system semantic colors (`Color.primary` / secondary), which adapt to
   // light/dark mode automatically. Callers can still override per-field.
   const modifiers: ModifierConfig[] = [tint(accentColor), font({ size: fontSize })];
   if (color) modifiers.push(foregroundStyle(color));
-  // Glass capsule (default) vs Material-style rounded border outline.
-  if (glassEffect) {
+  // Bare (caller draws the surface) vs glass capsule (default) vs
+  // Material-style rounded border outline.
+  if (bare) {
+    modifiers.push(textFieldStyle("plain"));
+  } else if (glassEffect) {
     modifiers.push(
       padding({ horizontal: 16, vertical: 12 }),
       glassEffectModifier({
@@ -77,6 +82,7 @@ export function AppTextInput({
       <SecureField
         text={value as ComponentProps<typeof SecureField>["text"]}
         onTextChange={onChangeText}
+        onFocusChange={onFocusChange}
         autoFocus={autoFocus}
         placeholder={placeholder}
         modifiers={modifiers}
@@ -90,6 +96,7 @@ export function AppTextInput({
     <TextField
       text={value as ComponentProps<typeof TextField>["text"]}
       onTextChange={onChangeText}
+      onFocusChange={onFocusChange}
       autoFocus={autoFocus}
       placeholder={placeholder}
       axis={multiline ? "vertical" : "horizontal"}

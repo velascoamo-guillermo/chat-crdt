@@ -12,8 +12,8 @@
 #   4. Test users + a clean "default" room:
 #      `apps/mobile/.maestro/scripts/server-ctl.sh reset-room` (server stopped)
 #      `bun apps/mobile/.maestro/scripts/setup-users.ts` (server started)
-#   5. Mobile app built and installed on the simulator, Metro running:
-#      `cd apps/mobile && bun run dev` (Metro), `expo run:ios` once to install/build
+#   5. The e2e app built and installed (release config, no Metro):
+#      `apps/mobile/.maestro/scripts/build-e2e.sh <ios|android> <device>`
 #   6. Run with a fresh RUN_ID nonce so message text never collides across runs:
 #      `maestro test apps/mobile/.maestro/01-login-and-online-message.yaml -e RUN_ID=$(date +%s)`
 #
@@ -32,6 +32,11 @@
 # logs out through the real UI first so this flow deterministically exercises the
 # login screen every run, regardless of leftover Keychain state.
 #
+# The header has no title text: the room name lives in the center glass pill, which
+# screen readers see as ONE element labelled "# general, <status>, N online"
+# (headerPillA11yLabel, src/chat/headerPill.ts). Hence the "# general.*" regex — it
+# matches the pill's label as long as it starts with the room name.
+#
 # Review-round-1 fix: this flow used to send the "online" message right after login
 # without checking the WebSocket was actually up — an optimistic local insert would
 # have made the message appear and the assertion pass even with a dead socket, which
@@ -43,9 +48,15 @@ appId: com.chatcrdt.app
 ---
 - launchApp:
     clearState: true
+# `runFlow.when` checks once, without waiting: if the first screen isn't up
+# yet, the guard is skipped and the app then lands in the chat (Keychain
+# session) with no Email field. Wait for either screen first.
+- extendedWaitUntil:
+    visible: "(Email|# general.*)"
+    timeout: 15000
 - runFlow:
     when:
-      visible: "# general"
+      visible: "# general.*"
     commands:
       - tapOn: "Account"
       - tapOn: "Log out"
@@ -54,11 +65,23 @@ appId: com.chatcrdt.app
 - tapOn: "Password"
 - inputText: "password123"
 - tapOn: "Login"
-- assertVisible: "# general"
+# iOS may raise the system "Save password?" sheet after login; it hides the app's
+# accessibility tree until dismissed. Locale-agnostic for the en/es simulators.
+- tapOn:
+    text: "(Not Now|Ahora no)"
+    optional: true
+- assertVisible: "# general.*"
+# Login lands in #general; this run's messages go to its own room.
+- runFlow: subflows/open-room.yaml
+- assertVisible:
+    id: "chat-ws-status"
+    label: "QA readout present (needs the e2e build: .maestro/scripts/build-e2e.sh)"
 - extendedWaitUntil:
     visible: "connected"
     timeout: 15000
-- tapOn: "Message…"
-- inputText: "${RUN_ID}-A-online-1"
-- tapOn: "Up"
-- assertVisible: "${RUN_ID}-A-online-1"
+- assertVisible: "0 msgs"
+- runFlow:
+    file: subflows/send.yaml
+    env:
+      TEXT: "${RUN_ID}-A-online-1"
+      COUNT: "1"

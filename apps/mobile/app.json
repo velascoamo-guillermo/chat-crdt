@@ -19,7 +19,9 @@
       "expo-secure-store",
       "expo-status-bar",
       "expo-sqlite",
-      "react-native-libsodium"
+      "react-native-libsodium",
+      "./config/withE2eLocalhostCleartext",
+      "./config/withQaReadoutBundleCheck"
     ],
     "experiments": {
       "typedRoutes": true

@@ -10,8 +10,9 @@ type Ref = ComponentRef<typeof KeyboardChatScrollView>;
 
 // Adapts KeyboardChatScrollView to a virtualized list via `renderScrollComponent`.
 // The scroll view is full-bleed to the bottom of the screen (the composer overlays
-// it), so `offset` is 0: on keyboard open the content lifts by the full keyboard
-// height, matching the sticky composer above it.
+// it). `offset` defaults to 0 — on keyboard open the content lifts by the full
+// keyboard height; the chat screen passes the bottom safe-area inset, which its
+// list padding already covers.
 export const ChatScrollView = forwardRef<Ref, Props>(function ChatScrollView(
   { inverted, ...props },
   ref

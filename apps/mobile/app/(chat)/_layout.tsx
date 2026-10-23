@@ -1,8 +1,10 @@
+import { Platform } from "react-native";
 import { Stack } from "expo-router";
-import { useUITheme } from "../../src/ui";
+import { useChatTheme, useUITheme } from "../../src/ui";
 
 export default function ChatLayout() {
   const t = useUITheme();
+  const chat = useChatTheme();
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
@@ -20,8 +22,13 @@ export default function ChatLayout() {
         // duplicate; different roomIds still push distinct entries.
         dangerouslySingular
         options={{
-          contentStyle: { backgroundColor: undefined },
-          headerStyle: { backgroundColor: "transparent" },
+          contentStyle: { backgroundColor: chat.bg },
+          // iOS: transparent over content. Android's header is opaque (see
+          // [roomId].tsx): paint it the chat canvas so it re-themes live —
+          // transparent shows the window background, which doesn't.
+          headerStyle: {
+            backgroundColor: Platform.OS === "ios" ? "transparent" : chat.bg,
+          },
           headerTitleAlign: "center",
         }}
       />

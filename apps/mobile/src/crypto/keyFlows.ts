@@ -182,11 +182,16 @@ export async function fetchAndLoadMyGrants(
   const privateKey = sodium.from_base64(identity.privateKey);
   const publicKey = sodium.from_base64(identity.publicKey);
 
-  // T15 fix 1: unlock first, persist after. Keystore writes can take
-  // seconds each under load (T16 report), and the live cipher only needs
-  // the unwrapped bytes — so every key reaches setKey before any cache
-  // write, and a slow or failing write can't delay or undo the unlock.
-  const unwrapped: { keyId: number; keyBytes: Uint8Array }[] = [];
+  // T15 fix 1: unlock first, persist after. Keystore ops can take seconds
+  // each under load (T16 report), so the hot path is one epoch read: grants
+  // above this user's highest cached epoch can't be cached yet and go
+  // straight to the cipher; persisting happens after every key is loaded.
+  //
+  // A key already cached for an epoch always wins over a grant for it and is
+  // never overwritten: a substituted grant (malicious server or member) must
+  // not replace a key this device already trusts.
+  const cachedCurrent = await store.getCachedCurrentEpoch(roomId).catch(() => null);
+  const toCache: { keyId: number; keyBytes: Uint8Array }[] = [];
   for (const grant of myGrants) {
     // Per-grant isolation (code review round 1, Important #4): one bad row
     // (corrupted wrappedKey, a grant sealed to a since-rotated identity that
@@ -195,18 +200,22 @@ export async function fetchAndLoadMyGrants(
     // unwrap — that would turn a single-epoch problem into "this member
     // can't decrypt this room at all".
     try {
+      if (cachedCurrent !== null && grant.keyId <= cachedCurrent) {
+        const cached = await store.getRoomKey(roomId, grant.keyId);
+        if (cached) {
+          cipher.setKey(grant.keyId, sodium.from_base64(cached));
+          continue;
+        }
+      }
       const keyBytes = sodium.crypto_box_seal_open(sodium.from_base64(grant.wrappedKey), publicKey, privateKey);
       cipher.setKey(grant.keyId, keyBytes);
-      unwrapped.push({ keyId: grant.keyId, keyBytes });
+      toCache.push({ keyId: grant.keyId, keyBytes });
     } catch {
-      // Not unwrappable with this identity (e.g. sealed to a key replaced
-      // elsewhere): a key cached earlier for this epoch still works.
-      const cached = await store.getRoomKey(roomId, grant.keyId).catch(() => null);
-      if (cached) cipher.setKey(grant.keyId, sodium.from_base64(cached));
+      continue;
     }
   }
 
-  for (const { keyId, keyBytes } of unwrapped) {
+  for (const { keyId, keyBytes } of toCache) {
     await store.cacheRoomKey(roomId, keyId, sodium.to_base64(keyBytes)).catch(() => undefined);
   }
 }

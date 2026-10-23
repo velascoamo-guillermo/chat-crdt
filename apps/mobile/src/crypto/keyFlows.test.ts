@@ -464,6 +464,39 @@ describe('fetchAndLoadMyGrants — unlock before caching (T15 fix 1)', () => {
     expect(loaded).toEqual({ 1: 'wrapped-for-epoch-1', 2: 'cached-epoch-2' });
   });
 
+  it('costs a single storage read before unlocking a room this user has never cached', async () => {
+    const { backend, state } = slowBackend();
+    const keyStore = new RoomKeyStore(backend);
+    await keyStore.forUser('u1').setIdentity({ publicKey: 'device-pub', privateKey: 'device-priv' });
+    useFetch(async () => new Response(JSON.stringify(TWO_GRANTS)));
+    await fetchAndLoadMyGrants(CTX, 'warm-up', keyStore, { setKey: () => undefined } as never);
+    const seen: { reads: number | null } = { reads: null };
+    state.reads.length = 0;
+
+    await fetchAndLoadMyGrants(CTX, 'r1', keyStore, { setKey: () => (seen.reads ??= state.reads.length) } as never);
+
+    expect(seen.reads).toBe(1);
+  });
+
+  it('never lets a grant replace a room key this user already cached for that epoch', async () => {
+    const backend = memoryBackend();
+    const keyStore = new RoomKeyStore(backend);
+    const store = keyStore.forUser('u1');
+    await store.setIdentity({ publicKey: 'device-pub', privateKey: 'device-priv' });
+    await store.cacheRoomKey('r1', 1, 'trusted-epoch-1');
+    useFetch(async () => new Response(JSON.stringify(TWO_GRANTS)));
+    const loaded: Record<number, string[]> = {};
+    const cipher = {
+      setKey: (k: number, bytes: Uint8Array) => (loaded[k] ??= []).push(new TextDecoder().decode(bytes)),
+    };
+
+    await fetchAndLoadMyGrants(CTX, 'r1', keyStore, cipher as never);
+
+    expect(loaded[1]).toEqual(['trusted-epoch-1']); // the substituted grant never reached the cipher
+    expect(loaded[2]).toEqual(['wrapped-for-epoch-2']);
+    expect(await store.getRoomKey('r1', 1)).toBe('trusted-epoch-1');
+  });
+
   it('reuses the identity ensureIdentityPublished just read instead of reading it again', async () => {
     const { backend, state } = slowBackend();
     // Stored by an earlier app session: nothing in memory yet.

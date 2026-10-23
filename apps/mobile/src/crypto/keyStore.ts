@@ -38,6 +38,20 @@ const USER_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
  */
 const identityMemo = new WeakMap<SecureKeyValueStore, Map<string, IdentityKeyPair>>();
 
+/**
+ * The legacy claim marker per backend, once read: it's checked on every
+ * cache miss (e.g. the first unlock of a new room) and only ever changes
+ * through adoptLegacyIdentity, which updates this too.
+ */
+const legacyClaimMemo = new WeakMap<SecureKeyValueStore, string | null>();
+
+async function readLegacyClaim(backend: SecureKeyValueStore): Promise<string | null> {
+  if (legacyClaimMemo.has(backend)) return legacyClaimMemo.get(backend) ?? null;
+  const claimedBy = await backend.getItem(LEGACY_CLAIM_STORAGE_KEY);
+  legacyClaimMemo.set(backend, claimedBy);
+  return claimedBy;
+}
+
 function memoFor(backend: SecureKeyValueStore): Map<string, IdentityKeyPair> {
   let memo = identityMemo.get(backend);
   if (!memo) {
@@ -77,9 +91,10 @@ export class RoomKeyStore {
     if (!raw) return false;
     const legacy = JSON.parse(raw) as IdentityKeyPair;
     if (legacy.publicKey !== publishedPublicKey) return false;
-    const claimedBy = await this.backend.getItem(LEGACY_CLAIM_STORAGE_KEY);
+    const claimedBy = await readLegacyClaim(this.backend);
     if (claimedBy !== null && claimedBy !== userId) return false;
     await this.backend.setItem(LEGACY_CLAIM_STORAGE_KEY, userId);
+    legacyClaimMemo.set(this.backend, userId);
     await target.setIdentity(legacy);
     return true;
   }
@@ -109,7 +124,7 @@ export class UserKeyStore {
 
   /** True only for the user who adopted the pre-T15 identity on this device. */
   private async ownsLegacyCache(): Promise<boolean> {
-    return (await this.backend.getItem(LEGACY_CLAIM_STORAGE_KEY)) === this.userId;
+    return (await readLegacyClaim(this.backend)) === this.userId;
   }
 
   /**

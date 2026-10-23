@@ -112,17 +112,45 @@ describe('RoomKeyStore.forUser', () => {
   });
 });
 
-describe('RoomKeyStore.getLegacyIdentity', () => {
-  it('reads the pre-T15 device-wide identity without removing it', async () => {
-    const backend = makeMemoryBackend();
-    backend.map.set('e2ee.identity', JSON.stringify({ publicKey: 'legacy-pub', privateKey: 'legacy-priv' }));
-    const root = new RoomKeyStore(backend);
+describe('RoomKeyStore.adoptLegacyIdentity', () => {
+  const LEGACY = { publicKey: 'legacy-pub', privateKey: 'legacy-priv' };
 
-    expect(await root.getLegacyIdentity()).toEqual({ publicKey: 'legacy-pub', privateKey: 'legacy-priv' });
-    expect(backend.map.has('e2ee.identity')).toBe(true);
+  function withLegacy() {
+    const backend = makeMemoryBackend();
+    backend.map.set('e2ee.identity', JSON.stringify(LEGACY));
+    return { backend, root: new RoomKeyStore(backend) };
+  }
+
+  it("copies the legacy keypair into the user's namespace when the published key matches, without removing it", async () => {
+    const { backend, root } = withLegacy();
+
+    expect(await root.adoptLegacyIdentity('user-a', 'legacy-pub')).toBe(true);
+
+    expect(await root.forUser('user-a').getIdentity()).toEqual(LEGACY);
+    expect(backend.map.get('e2ee.identity')).toBe(JSON.stringify(LEGACY));
   });
 
-  it('returns null when there is no legacy identity', async () => {
-    expect(await new RoomKeyStore(makeMemoryBackend()).getLegacyIdentity()).toBeNull();
+  it('refuses when the published key does not match', async () => {
+    const { root } = withLegacy();
+
+    expect(await root.adoptLegacyIdentity('user-a', 'other-pub')).toBe(false);
+    expect(await root.forUser('user-a').getIdentity()).toBeNull();
+  });
+
+  it('refuses when there is no legacy keypair', async () => {
+    const root = new RoomKeyStore(makeMemoryBackend());
+
+    expect(await root.adoptLegacyIdentity('user-a', 'legacy-pub')).toBe(false);
+  });
+
+  it('can be adopted by one user only, even if another later presents the same public key', async () => {
+    const { root } = withLegacy();
+    await root.adoptLegacyIdentity('user-a', 'legacy-pub');
+
+    expect(await root.adoptLegacyIdentity('user-b', 'legacy-pub')).toBe(false);
+    expect(await root.forUser('user-b').getIdentity()).toBeNull();
+    // Re-adopting by its owner (e.g. after clearIdentity) still works.
+    await root.forUser('user-a').clearIdentity();
+    expect(await root.adoptLegacyIdentity('user-a', 'legacy-pub')).toBe(true);
   });
 });

@@ -275,6 +275,17 @@ describe('ensureIdentityPublished — legacy device-wide identity migration (T15
     expect(backend.map.get('e2ee.identity')).toBe(JSON.stringify(LEGACY));
   });
 
+  it('never hands the legacy private key to a second user who published a copy of its public key', async () => {
+    const { keyStore } = withLegacy();
+    const server = fakeKeyServer({ alice: 'legacy-pub', mallory: 'legacy-pub' });
+    useFetch(server.handler);
+
+    await expect(ensureIdentityPublished(ctxFor('alice'), keyStore)).resolves.toBe('adopted-legacy');
+    await expect(ensureIdentityPublished(ctxFor('mallory'), keyStore)).resolves.toBe('republished');
+
+    expect((await keyStore.forUser('mallory').getIdentity())!.privateKey).not.toBe(LEGACY.privateKey);
+  });
+
   it("never hands the legacy private key to a user whose server key doesn't match it", async () => {
     const { backend, keyStore } = withLegacy();
     const server = fakeKeyServer({ bob: 'bob-pub-from-other-device' });

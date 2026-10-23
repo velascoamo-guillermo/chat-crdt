@@ -19,6 +19,8 @@ export interface IdentityKeyPair {
 
 /** Pre-T15 device-wide identity. Read-only now: only ever adopted, never written or deleted. */
 const LEGACY_IDENTITY_STORAGE_KEY = 'e2ee.identity';
+/** User id that adopted the legacy keypair; nobody else may adopt it afterwards. */
+const LEGACY_CLAIM_STORAGE_KEY = 'e2ee.identity.claimedBy';
 
 /**
  * No dots: every key below starts with `e2ee.user.<userId>.`, so a dot in
@@ -45,10 +47,23 @@ export class RoomKeyStore {
     return new UserKeyStore(this.backend, `e2ee.user.${userId}`);
   }
 
-  /** The unscoped keypair a pre-T15 build stored; whose it is is unknown until checked against the server. */
-  async getLegacyIdentity(): Promise<IdentityKeyPair | null> {
+  /**
+   * Migrates the pre-T15 device-wide keypair into `userId`'s namespace, only
+   * if its public key is the one published for that user (the server refuses
+   * a key another user already holds) and no other user has adopted it on
+   * this device before. The legacy entry itself is left in place.
+   */
+  async adoptLegacyIdentity(userId: string, publishedPublicKey: string): Promise<boolean> {
+    const target = this.forUser(userId);
     const raw = await this.backend.getItem(LEGACY_IDENTITY_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as IdentityKeyPair) : null;
+    if (!raw) return false;
+    const legacy = JSON.parse(raw) as IdentityKeyPair;
+    if (legacy.publicKey !== publishedPublicKey) return false;
+    const claimedBy = await this.backend.getItem(LEGACY_CLAIM_STORAGE_KEY);
+    if (claimedBy !== null && claimedBy !== userId) return false;
+    await this.backend.setItem(LEGACY_CLAIM_STORAGE_KEY, userId);
+    await target.setIdentity(legacy);
+    return true;
   }
 }
 

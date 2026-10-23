@@ -100,15 +100,11 @@ async function reconcileIdentity(ctx: KeyFlowsContext, keyStore: RoomKeyStore, u
     return 'mismatch';
   }
 
-  // Legacy migration: the device-wide keypair is adopted only by the account
-  // whose published key proves it's theirs; anyone else gets a fresh one.
-  // The legacy entry itself is never written or removed here.
-  if (published.publicKey !== null) {
-    const legacy = await keyStore.getLegacyIdentity();
-    if (legacy && legacy.publicKey === published.publicKey) {
-      await store.setIdentity(legacy);
-      return 'adopted-legacy';
-    }
+  // Legacy migration: the device-wide keypair goes to the account whose
+  // published key matches it (and only the first such account on this
+  // device — see adoptLegacyIdentity); anyone else gets a fresh one.
+  if (published.publicKey !== null && (await keyStore.adoptLegacyIdentity(userId, published.publicKey))) {
+    return 'adopted-legacy';
   }
 
   const kp = sodium.crypto_box_keypair('base64');

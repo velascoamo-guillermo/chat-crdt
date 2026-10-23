@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -7,6 +7,7 @@ const mockPrisma = {
   user: {
     update: jest.fn(),
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
   },
   roomKeyGrant: {
     deleteMany: jest.fn(),
@@ -20,6 +21,7 @@ describe('UsersService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     mockPrisma.$transaction.mockImplementation((ops: unknown[]) => Promise.all(ops));
+    mockPrisma.user.findFirst.mockResolvedValue(null);
     const module = await Test.createTestingModule({
       providers: [UsersService, { provide: PrismaService, useValue: mockPrisma }],
     }).compile();
@@ -78,7 +80,20 @@ describe('UsersService', () => {
       expect(mockPrisma.roomKeyGrant.deleteMany).toHaveBeenCalledWith({ where: { userId: 'user-1' } });
       expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     });
+    // T15: a published key is how a device recognises its own legacy
+    // keypair, so one user must not be able to claim another user's key.
+    it("rejects a public key another user already published, leaving that user's grants alone", async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 'user-2' });
+
+      await expect(service.setPublicKey('user-1', 'someone-elses-key')).rejects.toThrow(ConflictException);
+      expect(mockPrisma.user.findFirst).toHaveBeenCalledWith({
+        where: { publicKeyFp: expect.stringMatching(/^[0-9a-f]{128}$/), NOT: { id: 'user-1' } },
+        select: { id: true },
+      });
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
   });
+
   // T15: lets a device compare its local identity with what's published,
   // so a key replaced on another device is detected instead of overwritten.
   describe('getPublicKey', () => {

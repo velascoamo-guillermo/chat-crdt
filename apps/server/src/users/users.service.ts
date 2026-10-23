@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -37,9 +37,20 @@ export class UsersService {
    * puts every one of this user's (room, epoch) pairs back into
    * GET /rooms/:id/keys/pending automatically (Multi-device / reinstall,
    * ADR-010).
+   *
+   * T15: a key already published by another user is refused. Public keys
+   * are visible to every room member, and a device decides whether its
+   * pre-T15 keypair belongs to the signed-in user by comparing it with the
+   * published key — so a copied key must not become a claim on it.
    */
   async setPublicKey(userId: string, publicKey: string): Promise<PublicKeyResult> {
     const publicKeyFp = createHash('blake2b512').update(publicKey).digest('hex');
+
+    const holder = await this.prisma.user.findFirst({
+      where: { publicKeyFp, NOT: { id: userId } },
+      select: { id: true },
+    });
+    if (holder) throw new ConflictException('Public key already in use');
 
     await this.prisma.$transaction([
       this.prisma.roomKeyGrant.deleteMany({ where: { userId } }),

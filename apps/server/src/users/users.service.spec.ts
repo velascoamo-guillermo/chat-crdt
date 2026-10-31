@@ -1,5 +1,6 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { Prisma } from '@prisma/client';
 import { UsersService } from './users.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -91,6 +92,27 @@ describe('UsersService', () => {
         select: { id: true },
       });
       expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    // T15 fix 2: the check above races; the unique index on publicKeyFp is
+    // what actually holds, and its violation must read as the same 409.
+    it('maps a unique violation on publicKeyFp (lost race) to ConflictException', async () => {
+      mockPrisma.$transaction.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed on the fields: (`publicKeyFp`)', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { target: ['publicKeyFp'] },
+        }),
+      );
+
+      await expect(service.setPublicKey('user-1', 'raced-key')).rejects.toThrow(ConflictException);
+    });
+
+    it('does not swallow other database errors', async () => {
+      const boom = new Error('connection lost');
+      mockPrisma.$transaction.mockRejectedValue(boom);
+
+      await expect(service.setPublicKey('user-1', 'k')).rejects.toBe(boom);
     });
   });
 

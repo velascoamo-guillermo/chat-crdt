@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -52,10 +53,20 @@ export class UsersService {
     });
     if (holder) throw new ConflictException('Public key already in use');
 
-    await this.prisma.$transaction([
-      this.prisma.roomKeyGrant.deleteMany({ where: { userId } }),
-      this.prisma.user.update({ where: { id: userId }, data: { publicKey, publicKeyFp } }),
-    ]);
+    // The check above is check-then-write; two concurrent PUTs of one key can
+    // both pass it. The unique index on publicKeyFp decides the race, and the
+    // loser's transaction (grant delete included) rolls back.
+    try {
+      await this.prisma.$transaction([
+        this.prisma.roomKeyGrant.deleteMany({ where: { userId } }),
+        this.prisma.user.update({ where: { id: userId }, data: { publicKey, publicKeyFp } }),
+      ]);
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException('Public key already in use');
+      }
+      throw err;
+    }
 
     return { publicKey, publicKeyFp };
   }

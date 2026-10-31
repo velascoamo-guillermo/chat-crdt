@@ -3,12 +3,18 @@ import { ConfigService } from '@nestjs/config';
 import { JwtModule, JwtService } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { Test } from '@nestjs/testing';
+import { Prisma } from '@prisma/client';
 import { JwtStrategy } from '../auth/jwt.strategy';
 import { PrismaService } from '../prisma/prisma.service';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 
 const SECRET = 'users-controller-spec-secret';
+
+interface UpdateArgs {
+  where: { id: string };
+  data: { publicKey: string; publicKeyFp: string };
+}
 
 const mockPrisma = {
   user: {
@@ -119,6 +125,38 @@ describe('UsersController (HTTP)', () => {
 
       expect(res.status).toBe(409);
       expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    // T15 fix 2: both requests pass the duplicate check before either writes
+    // (the race the check alone can't close). The fake enforces the unique
+    // index the way Postgres does, so only one write may land.
+    it('lets exactly one of two concurrent PUTs of the same key through; the other is 409', async () => {
+      const holders = new Map<string, string>(); // publicKeyFp -> userId
+      let arrived = 0;
+      let release!: () => void;
+      const bothChecked = new Promise<void>((r) => (release = r));
+      mockPrisma.user.findFirst.mockImplementation(async () => {
+        if (++arrived === 2) release();
+        await bothChecked;
+        return null;
+      });
+      mockPrisma.user.update.mockImplementation(async ({ where, data }: UpdateArgs) => {
+        const holder = holders.get(data.publicKeyFp);
+        if (holder && holder !== where.id) {
+          throw new Prisma.PrismaClientKnownRequestError('Unique constraint failed on the fields: (`publicKeyFp`)', {
+            code: 'P2002',
+            clientVersion: 'test',
+            meta: { target: ['publicKeyFp'] },
+          });
+        }
+        holders.set(data.publicKeyFp, where.id);
+        return {};
+      });
+
+      const statuses = (await Promise.all([put('user-1', KEY), put('user-2', KEY)])).map((r) => r.status);
+
+      expect(statuses.sort()).toEqual([200, 409]);
+      expect(holders.size).toBe(1);
     });
   });
 });

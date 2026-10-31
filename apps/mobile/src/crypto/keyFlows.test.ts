@@ -192,6 +192,39 @@ describe('ensureIdentityPublished — per-user identity (T15)', () => {
     expect(server.state.puts).toEqual([{ userId: 'u1', publicKey: 'pub-u1' }]);
   });
 
+  // T15 fix 2 migration: an account whose duplicate key was cleared still
+  // holds it locally, but the unique index keeps it with the oldest holder.
+  // Re-PUTting it would 409 on every login; the device must move on.
+  it('replaces a local key the server refuses as already taken by another user', async () => {
+    const keyStore = new RoomKeyStore(memoryBackend());
+    await keyStore.forUser('u1').setIdentity({ publicKey: 'pub-shared', privateKey: 'priv-shared' });
+    const server = fakeKeyServer();
+    useFetch(async (input, init) => {
+      const body = init?.body ? (JSON.parse(String(init.body)) as { publicKey: string }) : null;
+      if (init?.method === 'PUT' && body?.publicKey === 'pub-shared') {
+        return new Response(JSON.stringify({ message: 'Public key already in use' }), { status: 409 });
+      }
+      return server.handler(input, init);
+    });
+
+    await expect(ensureIdentityPublished(CTX, keyStore)).resolves.toBe('republished');
+
+    const fresh = await keyStore.forUser('u1').getIdentity();
+    expect(fresh?.publicKey).not.toBe('pub-shared');
+    expect(server.state.published.u1).toBe(fresh?.publicKey ?? '');
+  });
+
+  it('keeps the local key when publishing it fails for any other reason', async () => {
+    const keyStore = new RoomKeyStore(memoryBackend());
+    await keyStore.forUser('u1').setIdentity({ publicKey: 'pub-u1', privateKey: 'priv-u1' });
+    const server = fakeKeyServer();
+    server.state.failPuts = 1;
+    useFetch(server.handler);
+
+    await expect(ensureIdentityPublished(CTX, keyStore)).rejects.toThrow();
+    expect(await keyStore.forUser('u1').getIdentity()).toEqual({ publicKey: 'pub-u1', privateKey: 'priv-u1' });
+  });
+
   it('reports a mismatch and overwrites neither side when the server key was replaced elsewhere', async () => {
     const keyStore = new RoomKeyStore(memoryBackend());
     await keyStore.forUser('u1').setIdentity({ publicKey: 'pub-this-device', privateKey: 'priv-this-device' });

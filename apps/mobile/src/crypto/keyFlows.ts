@@ -21,9 +21,19 @@ async function authFetch<T>(ctx: KeyFlowsContext, path: string, init?: RequestIn
     const parsed: unknown = await res.json().catch(() => ({}));
     const body: ErrorBody = parsed && typeof parsed === 'object' ? (parsed as ErrorBody) : {};
     const message = Array.isArray(body.message) ? body.message.join(', ') : body.message;
-    throw new Error(message ?? `E2EE request failed: ${res.status}`);
+    throw new E2eeRequestError(res.status, message ?? `E2EE request failed: ${res.status}`);
   }
   return res.json() as Promise<T>;
+}
+
+export class E2eeRequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'E2eeRequestError';
+  }
 }
 
 /**
@@ -123,8 +133,17 @@ async function reconcileIdentity(ctx: KeyFlowsContext, keyStore: RoomKeyStore, u
   if (local) {
     if (published.publicKey === local.publicKey) return 'ok';
     if (published.publicKey === null) {
-      await putPublicKey(ctx, local.publicKey);
-      return 'published';
+      try {
+        await putPublicKey(ctx, local.publicKey);
+        return 'published';
+      } catch (err) {
+        // 409: another account holds this public key (the T15 dedupe
+        // migration kept it with its oldest holder). It can never be this
+        // account's again, so replace it rather than retry forever.
+        if (!(err instanceof E2eeRequestError && err.status === 409)) throw err;
+        await publishFreshIdentity(ctx, store);
+        return 'republished';
+      }
     }
     return 'mismatch';
   }

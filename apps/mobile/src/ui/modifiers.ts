@@ -207,3 +207,36 @@ export function glassChip(fallback: GlassFallback) {
     glassEffect({ glass: { variant: "regular" }, shape: "capsule" }),
   ];
 }
+
+// Full-width glass card for in-chat notices (e.g. the identity-mismatch
+// banner) — same rounded-rect glass as the composer. Android fakes it with
+// the `glassFallback` fill + hairline border.
+export function glassCard(fallback: GlassFallback) {
+  if (Platform.OS === "android") {
+    return [
+      fillMaxWidth(),
+      clip(Shapes.RoundedCorner(20)),
+      background(fallback.fill),
+      border(1, fallback.border),
+      composePadding(16, 14, 16, 14),
+    ];
+  }
+  return [
+    padding({ horizontal: 16, vertical: 14 }),
+    frame({ maxWidth: Infinity, alignment: "leading" }),
+    glassEffect({ glass: { variant: "regular" }, shape: "roundedRectangle", cornerRadius: 20 }),
+  ];
+}
+
+// Compact tinted glass capsule button sized to its label (card actions).
+// Android: solid rounded fill in the tint, as circleButton does.
+export function glassActionPill(tint: string) {
+  if (Platform.OS === "android") {
+    return [clip(Shapes.RoundedCorner(18)), background(tint)];
+  }
+  return [
+    buttonStyle("plain"),
+    padding({ horizontal: 14, vertical: 8 }),
+    glassEffect({ glass: { variant: "regular", tint, interactive: true }, shape: "capsule" }),
+  ];
+}

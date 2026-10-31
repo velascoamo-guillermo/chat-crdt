@@ -44,8 +44,14 @@ mock.module('react-native-libsodium', () => ({
   },
 }));
 
-const { ensureIdentityPublished, fetchAndLoadMyGrants, servePendingGrants, enableOrRotateRoomKey, userIdFromToken } =
-  await import('./keyFlows');
+const {
+  ensureIdentityPublished,
+  fetchAndLoadMyGrants,
+  servePendingGrants,
+  enableOrRotateRoomKey,
+  resetDeviceIdentity,
+  userIdFromToken,
+} = await import('./keyFlows');
 const { computePublicKeyFp } = await import('./publicKeyFp');
 
 function memoryBackend(): SecureKeyValueStore & { map: Map<string, string> } {
@@ -571,5 +577,69 @@ describe('computePublicKeyFp (code review round 1, Important #8 — cross-side f
     expect(digest).toBe(
       '009be997ee9932add4e77a198900627bd485de0f425d7f0b7143122bfa05b14a702a2ae7fb9f081b19d12cf766f4bcb2897f54453c13ee2953dceed5ddaf6226'
     );
+  });
+});
+
+// T15 fix 2 (owner policy a): on a mismatch the user may replace this
+// device's key. That republishes, so their other device loses access.
+describe('resetDeviceIdentity', () => {
+  const STALE = { publicKey: 'pub-this-device', privateKey: 'priv-this-device' };
+
+  it('replaces a mismatched local key with a fresh published one', async () => {
+    const keyStore = new RoomKeyStore(memoryBackend());
+    await keyStore.forUser('u1').setIdentity(STALE);
+    const server = fakeKeyServer({ u1: 'pub-other-device' });
+    useFetch(server.handler);
+
+    await expect(resetDeviceIdentity(CTX, keyStore)).resolves.toBe('republished');
+
+    const fresh = await keyStore.forUser('u1').getIdentity();
+    expect(fresh).not.toBeNull();
+    expect(fresh?.publicKey).not.toBe(STALE.publicKey);
+    expect(server.state.published.u1).toBe(fresh?.publicKey ?? '');
+    expect(await ensureIdentityPublished(CTX, keyStore)).toBe('ok');
+  });
+
+  it('leaves a key that matches the server alone', async () => {
+    const keyStore = new RoomKeyStore(memoryBackend());
+    await keyStore.forUser('u1').setIdentity(STALE);
+    const server = fakeKeyServer({ u1: STALE.publicKey });
+    useFetch(server.handler);
+
+    await expect(resetDeviceIdentity(CTX, keyStore)).resolves.toBe('ok');
+    expect(server.state.puts).toHaveLength(0);
+    expect(await keyStore.forUser('u1').getIdentity()).toEqual(STALE);
+  });
+
+  it("only touches the signed-in user's key", async () => {
+    const keyStore = new RoomKeyStore(memoryBackend());
+    await keyStore.forUser('u1').setIdentity(STALE);
+    await keyStore.forUser('u2').setIdentity({ publicKey: 'pub-u2', privateKey: 'priv-u2' });
+    useFetch(fakeKeyServer({ u1: 'pub-other-device', u2: 'pub-u2' }).handler);
+
+    await resetDeviceIdentity(CTX, keyStore);
+
+    expect(await keyStore.forUser('u2').getIdentity()).toEqual({ publicKey: 'pub-u2', privateKey: 'priv-u2' });
+  });
+
+  it('keeps the old key and the server key when publishing the new one fails', async () => {
+    const keyStore = new RoomKeyStore(memoryBackend());
+    await keyStore.forUser('u1').setIdentity(STALE);
+    const server = fakeKeyServer({ u1: 'pub-other-device' });
+    server.state.failPuts = 1;
+    useFetch(server.handler);
+
+    await expect(resetDeviceIdentity(CTX, keyStore)).rejects.toThrow();
+    expect(await keyStore.forUser('u1').getIdentity()).toEqual(STALE);
+    expect(server.state.published.u1).toBe('pub-other-device');
+  });
+
+  it('keeps the old key when the server cannot be reached for the check', async () => {
+    const keyStore = new RoomKeyStore(memoryBackend());
+    await keyStore.forUser('u1').setIdentity(STALE);
+    useFetch(async () => new Response('down', { status: 503 }));
+
+    await expect(resetDeviceIdentity(CTX, keyStore)).rejects.toThrow();
+    expect(await keyStore.forUser('u1').getIdentity()).toEqual(STALE);
   });
 });

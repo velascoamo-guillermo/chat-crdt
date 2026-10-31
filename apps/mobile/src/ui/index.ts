@@ -35,6 +35,8 @@ export {
   glassChip,
   composerPill,
   composerCard,
+  glassCard,
+  glassActionPill,
   accessibleLabel,
   decorative,
   type GlassFallback,

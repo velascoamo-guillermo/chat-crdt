@@ -38,6 +38,7 @@ import { ChatScrollView } from "../../src/components/ChatScrollView";
 import { usePresence } from "../../src/hooks/usePresence";
 import { TypingIndicator } from "../../src/components/TypingIndicator";
 import { EmptyRoom } from "../../src/components/EmptyRoom";
+import { IdentityMismatchBanner } from "../../src/components/IdentityMismatchBanner";
 import { showEmptyRoom } from "../../src/chat/emptyRoomGate";
 import {
   composerResizeScroll,
@@ -423,6 +424,7 @@ export default function ChatScreen() {
           keyboard is closed; open, it docks on the keyboard edge. */}
       <KeyboardStickyView style={[styles.composer]} offset={{ closed: -bottom, opened: 0 }}>
         <View onLayout={handleComposerLayout}>
+          <IdentityMismatchBanner />
           {canEnableE2ee ? <EnableEncryptionBanner roomId={roomId} /> : null}
           {!composerReady ? (
             <View style={[styles.e2eeBanner, { backgroundColor: t.surface, borderColor: t.border }]}>

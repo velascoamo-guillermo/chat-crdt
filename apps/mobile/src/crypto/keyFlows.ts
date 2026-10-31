@@ -1,5 +1,5 @@
 import sodium from 'react-native-libsodium';
-import { RoomKeyStore } from './keyStore';
+import { RoomKeyStore, type UserKeyStore } from './keyStore';
 import { computePublicKeyFp } from './publicKeyFp';
 import type { LibsodiumContentCipher } from './LibsodiumContentCipher';
 
@@ -81,9 +81,38 @@ export function ensureIdentityPublished(ctx: KeyFlowsContext, keyStore: RoomKeyS
   const userId = userIdFromToken(ctx.token);
   const pending = inFlight.get(userId);
   if (pending) return pending;
-  const run = reconcileIdentity(ctx, keyStore, userId).finally(() => inFlight.delete(userId));
+  return track(userId, reconcileIdentity(ctx, keyStore, userId));
+}
+
+function track(userId: string, work: Promise<IdentityStatus>): Promise<IdentityStatus> {
+  const run = work.finally(() => {
+    if (inFlight.get(userId) === run) inFlight.delete(userId);
+  });
   inFlight.set(userId, run);
   return run;
+}
+
+/**
+ * T15 fix 2 (owner policy a): the user chose to replace this device's key
+ * after a mismatch. Re-checks first (another sync may have resolved it), then
+ * publishes a fresh keypair — which revokes the key the other device holds,
+ * so that device loses access to encrypted history (ADR-010 reinstall path).
+ *
+ * Publish-then-overwrite, as in reconcileIdentity: a failed PUT leaves the
+ * old local key and the server untouched, still a mismatch.
+ */
+export function resetDeviceIdentity(ctx: KeyFlowsContext, keyStore: RoomKeyStore): Promise<IdentityStatus> {
+  const userId = userIdFromToken(ctx.token);
+  const previous = inFlight.get(userId)?.catch(() => undefined) ?? Promise.resolve();
+  return track(
+    userId,
+    previous.then(async () => {
+      const status = await reconcileIdentity(ctx, keyStore, userId);
+      if (status !== 'mismatch') return status;
+      await publishFreshIdentity(ctx, keyStore.forUser(userId));
+      return 'republished';
+    }),
+  );
 }
 
 async function reconcileIdentity(ctx: KeyFlowsContext, keyStore: RoomKeyStore, userId: string): Promise<IdentityStatus> {
@@ -107,10 +136,14 @@ async function reconcileIdentity(ctx: KeyFlowsContext, keyStore: RoomKeyStore, u
     return 'adopted-legacy';
   }
 
+  await publishFreshIdentity(ctx, store);
+  return published.publicKey === null ? 'published' : 'republished';
+}
+
+async function publishFreshIdentity(ctx: KeyFlowsContext, store: UserKeyStore): Promise<void> {
   const kp = sodium.crypto_box_keypair('base64');
   await putPublicKey(ctx, kp.publicKey);
   await store.setIdentity({ publicKey: kp.publicKey, privateKey: kp.privateKey });
-  return published.publicKey === null ? 'published' : 'republished';
 }
 
 async function putPublicKey(ctx: KeyFlowsContext, publicKey: string): Promise<void> {

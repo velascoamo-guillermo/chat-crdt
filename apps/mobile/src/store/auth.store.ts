@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
 import type { UserDto, AuthResponse } from '@chat-crdt/shared';
 import { useChatStore } from './chat.store';
-import { syncIdentity } from '../crypto/identitySync';
+import { resetIdentity, syncIdentity } from '../crypto/identitySync';
 import type { IdentityStatus } from '../crypto/keyFlows';
 import { makeSyncIdentity } from './identitySession';
 
@@ -20,6 +20,8 @@ interface AuthState {
   logout: () => Promise<void>;
   loadFromStorage: () => Promise<void>;
   syncIdentity: () => Promise<void>;
+  /** T15 fix 2: replace a mismatched device key; failures leave identityStatus at 'mismatch'. */
+  resetIdentity: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -76,6 +78,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     getToken: () => get().token,
     setStatus: (identityStatus) => set({ identityStatus }),
     sync: (token) => syncIdentity(API, token),
+    warn: (message) => console.warn(message),
+  }),
+
+  resetIdentity: makeSyncIdentity({
+    getToken: () => get().token,
+    setStatus: (identityStatus) => set({ identityStatus }),
+    sync: (token) => resetIdentity(API, token),
     warn: (message) => console.warn(message),
   }),
 
